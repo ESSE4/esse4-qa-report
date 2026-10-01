@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Report dei test</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="app.ico" sizes="any" />
+  <link rel="stylesheet" href="app.css" />
+  <script>
+    // Tema scelto prima del primo disegno (niente lampo chiaro/scuro).
+    try { var t = localStorage.getItem('qa:theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="logo.png" width="30" height="30" alt="" />
+      <span class="brand-text"><span class="brand-title" id="brand-title">Report dei test</span><span class="brand-sub" id="brand-sub"></span></span>
+    </a>
+    <nav class="topnav" id="topnav" aria-label="Sezioni">
+      <a href="#/" data-nav="home">Panoramica</a>
+      <a href="#/builds" data-nav="builds">Build</a>
+      <a href="#/run" data-nav="run">Test</a>
+    </nav>
+    <div class="topbar-right">
+      <label class="run-picker"><span class="sr-only">Esecuzione</span><select id="run-picker" aria-label="Esecuzione"></select></label>
+      <button type="button" class="icon-btn" id="theme-btn" title="Tema chiaro/scuro" aria-label="Tema chiaro/scuro"></button>
+    </div>
+  </header>
+
+  <main id="app" class="app" tabindex="-1">
+    <div class="loading">Caricamento…</div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p class="noscript">Il report richiede JavaScript.</p></noscript>
+  <script src="data/index.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
