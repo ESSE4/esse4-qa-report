@@ -171,6 +171,14 @@
     document.getElementById('brand-sub').textContent =
       `${runs.length} esecuzion${runs.length === 1 ? 'e' : 'i'}${idx.masked ? ' · segreti mascherati' : ''}`;
     document.getElementById('brand-sub').title = 'Report generato il ' + dt(idx.generated);
+    // Report fratelli nello stesso sito (es. API e frontend), ciascuno con il proprio storico.
+    const suites = document.getElementById('suitenav');
+    if ((idx.nav || []).length > 1) {
+      suites.innerHTML = idx.nav.map(n => n.active
+        ? `<span class="active" aria-current="page">${esc(n.label)}</span>`
+        : `<a href="${esc(n.url)}">${esc(n.label)}</a>`).join('');
+      suites.hidden = false;
+    }
     const picker = document.getElementById('run-picker');
     picker.innerHTML = runs.slice().reverse().map(r =>
       `<option value="${esc(r.id)}">${esc(dtShort(r.start))} · ${esc(r.build)} · ${r.counts.passed}/${r.counts.total}</option>`).join('');
