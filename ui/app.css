@@ -801,3 +801,7 @@ a.icon-btn:hover { text-decoration: none; }
 .t-head-notes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .t-head-notes .callout { padding: 6px 10px; gap: 8px; font-size: 13px; border-radius: 8px; }
 .t-head-notes .callout .icon { width: 15px; height: 15px; }
+
+/* Dati dal DB nel passo: query e risultato apribili sotto la riga. */
+.data-details { margin: 4px 0 6px 22px; }
+.data-details > summary { cursor: pointer; font-size: 12.5px; }
