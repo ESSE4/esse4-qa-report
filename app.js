@@ -1284,7 +1284,12 @@
       if (ep) body += `<div class="log-line muted">${ic('route')}<span class="break">${esc(ep.split(' (')[0])}</span></div>`;
     }
     a.logs.forEach(s => { body += `<div class="log-line ${/ERROR|FATAL/i.test(s.level || '') ? 'error' : ''}">${ic('server')}<span class="break">${esc(exceptionHeadline(s))}</span></div>`; });
-    a.other.forEach(s => { body += `<div class="log-line ${s.kind === 'data' ? 'data' : 'muted'}">${ic(s.kind === 'data' ? 'db' : 'info')}<span class="break">${esc(s.text)}</span></div>`; });
+    a.other.forEach(s => {
+      body += `<div class="log-line ${s.kind === 'data' ? 'data' : 'muted'}">${ic(s.kind === 'data' ? 'db' : 'info')}<span class="break">${esc(s.text)}</span></div>`;
+      // Dati dal DB: la query compilata e il risultato in tabella, apribili sotto la riga.
+      if (s.kind === 'data' && (s.details || []).length)
+        body += `<details class="data-details"><summary class="muted">${s.details.map(d => esc(d.key)).join(' e ')}</summary>${s.details.map(d => code(d.value, { label: d.key, plain: true })).join('')}</details>`;
+    });
     if (!res && !a.logs.length && !a.other.length) body += '<div class="muted">—</div>';
     body += '</div></div>';
     const fails = a.checks.filter(c => c.ok === false);
