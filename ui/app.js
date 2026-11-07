@@ -1,10 +1,10 @@
 // QaReport — pagina del report (JavaScript semplice, nessuna libreria).
 //
-// Dati: data/index.js imposta QA.index (esecuzioni, build, storico per test); il dettaglio di
+// Dati: data/index.js imposta QA.index (esecuzioni, versioni, storico per test); il dettaglio di
 // un'esecuzione arriva da data/runs/<id>.js, caricato su richiesta, che chiama QA.load(id, dati).
 // Indirizzi con "#" (funzionano anche aperti da file o da una cartella di rete):
-//   #/                         panoramica (ultima esecuzione, confronto con la build precedente)
-//   #/builds                   build del sistema: regressioni e fix per build
+//   #/                         panoramica (ultima esecuzione, confronto con la versione precedente)
+//   #/versions                 versioni del sistema: possibili regressioni e fix per versione
 //   #/run/<id>[?f=…&q=…]       esplora un'esecuzione (albero dei test + riepilogo)
 //   #/run/<id>/test/<chiave>   dettaglio di un test
 (function () {
@@ -36,6 +36,8 @@
     ok: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16.5 9.5"/>',
     ko: '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
     skip: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+    ban: '<circle cx="12" cy="12" r="9"/><path d="M5.7 5.7l12.6 12.6"/>',
+    question: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5M12 16.8v.2"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     chevDown: '<path d="M6 9l6 6 6-6"/>',
     chevRight: '<path d="M9 6l6 6-6 6"/>',
@@ -73,17 +75,61 @@
     image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 16l-5-5-9 8.5"/>',
   };
   const ic = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
-  const statusIcon = s => s === 'passed' ? ic('ok', 's-passed') : s === 'failed' ? ic('ko', 's-failed') : ic('skip', 's-' + s);
-  const statusLabel = s => ({ passed: 'Superato', failed: 'Fallito', skipped: 'Saltato', inconclusive: 'Inconcludente' }[s] || s);
+  // Esiti di un test: superato, fallito, bloccato (da un difetto noto già dimostrato da un altro
+  // test: non fallisce una seconda volta), inconcludente (Assert.Inconclusive, Assume), ignorato
+  // ([Ignore], Explicit, Assert.Ignore). Gli ultimi tre non contano né tra i superati né tra i falliti.
+  const STATUS = {
+    passed: { label: 'Superato', plural: 'superati', icon: 'ok', letter: 'P' },
+    failed: { label: 'Fallito', plural: 'falliti', icon: 'ko', letter: 'F' },
+    blocked: { label: 'Bloccato', plural: 'bloccati', icon: 'ban', letter: 'B' },
+    inconclusive: { label: 'Inconcludente', plural: 'inconcludenti', icon: 'question', letter: 'I' },
+    ignored: { label: 'Ignorato', plural: 'ignorati', icon: 'skip', letter: 'G' },
+  };
+  const statusOf = s => STATUS[s] ? s : s === 'skipped' ? 'ignored' : 'inconclusive';
+  const statusOfLetter = l => Object.keys(STATUS).find(k => STATUS[k].letter === l) || 'inconclusive';
+  const statusIcon = s => ic(STATUS[statusOf(s)].icon, 's-' + statusOf(s));
+  const statusLabel = s => STATUS[statusOf(s)].label;
 
-  // Cambiamenti rispetto alla build precedente.
+  /** Conteggi per esito di un elenco di test (come run.counts). */
+  const countsOf = tests => {
+    const c = { total: tests.length, passed: 0, failed: 0, blocked: 0, inconclusive: 0, ignored: 0 };
+    tests.forEach(t => { c[statusOf(t.status)]++; });
+    return c;
+  };
+  const others = c => (c.blocked || 0) + (c.inconclusive || 0) + (c.ignored || 0);
+
+  // Cambiamenti rispetto alla versione precedente.
   const CHANGES = {
-    regression: { label: 'Regressione', plural: 'Regressioni', cls: 'c-reg', icon: 'up', count: 'reg' },
+    regression: { label: 'Possibile regressione', plural: 'Possibili regressioni', cls: 'c-reg', icon: 'up', count: 'reg' },
     fixed: { label: 'Corretto', plural: 'Corretti', cls: 'c-fix', icon: 'check', count: 'fix' },
     'still-failing': { label: 'Ancora fallito', plural: 'Ancora falliti', cls: 'c-still', icon: 'repeat', count: 'still' },
+    unverified: { label: 'Non più verificato', plural: 'Non più verificati', cls: 'c-unver', icon: 'question', count: 'unver' },
     new: { label: 'Nuovo', plural: 'Nuovi', cls: 'c-new', icon: 'plus', count: 'new' },
     flaky: { label: 'Instabile', plural: 'Instabili', cls: 'c-flaky', icon: 'zig', count: 'flaky' },
   };
+  /**
+   * Indirizzo della issue di un difetto noto: l'url scritto nel test ([KnownDefect]/[BlockedBy]),
+   * altrimenti la mappa e il modello configurati in appsettings.json del generatore (defectLinks).
+   */
+  const defectUrl = d => {
+    if (!d) return null;
+    const l = (idx && idx.defectLinks) || {};
+    return d.url || (l.issues || {})[d.id] || (l.urlTemplate ? l.urlTemplate.split('{id}').join(encodeURIComponent(d.id)) : null);
+  };
+  /**
+   * Etichetta di un difetto: con <paramref>link</paramref> e un indirizzo configurato è un link
+   * alla issue (nuova scheda); senza (es. dentro una riga dell'albero, che è già un link) è testo.
+   */
+  const defectTag = (d, cls, html, title, link) => {
+    const u = link ? defectUrl(d) : null;
+    return u ? `<a class="badge ${cls} issue-link" href="${esc(u)}" target="_blank" rel="noopener" title="${esc(title)} · apri la issue">${html}${ic('external')}</a>`
+      : `<span class="badge ${cls}" title="${esc(title)}">${html}</span>`;
+  };
+  /** Etichetta del difetto che blocca il test (o che lo bloccava, se ora passa). */
+  const blockedBadge = (t, link) => !t.blockedBy ? ''
+    : statusOf(t.status) === 'blocked' ? defectTag(t.blockedBy, 'blocked', `${ic('ban')}${esc(t.blockedBy.id)}`, t.blockedBy.title || '', link)
+    : defectTag(t.blockedBy, 'unblocked', `${ic('ban')}non più ${esc(t.blockedBy.id)}`, `Non più bloccato da ${t.blockedBy.id}`, link);
+
   const changeBadge = c => {
     if (!c) return '';
     let s = '';
@@ -181,7 +227,7 @@
     }
     const picker = document.getElementById('run-picker');
     picker.innerHTML = runs.slice().reverse().map(r =>
-      `<option value="${esc(r.id)}">${esc(dtShort(r.start))} · ${esc(r.build)} · ${r.counts.passed}/${r.counts.total}</option>`).join('');
+      `<option value="${esc(r.id)}">${esc(dtShort(r.start))} · ${esc(r.version)} · ${r.counts.passed}/${r.counts.total}</option>`).join('');
     picker.addEventListener('change', () => { location.hash = `#/run/${encodeURIComponent(picker.value)}`; });
     const themeBtn = document.getElementById('theme-btn');
     const paintTheme = () => {
@@ -208,30 +254,44 @@
 
   // ================================================================== componenti
 
+  /** Testo dell'esito per i lettori di schermo e i suggerimenti: "N test: x superati, y falliti, …". */
+  const countsText = c => `${c.total} test: ${c.passed} superati, ${c.failed} falliti` +
+    (c.blocked ? `, ${c.blocked} bloccati` : '') + (c.inconclusive ? `, ${c.inconclusive} inconcludenti` : '') + (c.ignored ? `, ${c.ignored} ignorati` : '');
+
   function donut(c) {
-    const p1 = c.total ? 100 * c.passed / c.total : 0;
-    const p2 = c.total ? 100 * (c.passed + c.failed) / c.total : 0;
-    return `<div class="donut" style="--p1:${p1}%;--p2:${p2}%" role="img" aria-label="${c.passed} superati, ${c.failed} falliti su ${c.total}">
+    const at = v => c.total ? 100 * v / c.total : 0;
+    const b = c.passed + c.failed + (c.blocked || 0);
+    const p1 = at(c.passed), p2 = at(c.passed + c.failed), pb = at(b), p3 = at(b + (c.inconclusive || 0));
+    return `<div class="donut" style="--p1:${p1}%;--p2:${p2}%;--pb:${pb}%;--p3:${p3}%" role="img" aria-label="${esc(countsText(c))}">
       <div class="donut-hole"><span class="donut-value">${pct(c.passed, c.total)}</span><span class="donut-label">superati</span></div></div>`;
   }
 
+  /** Titolo dell'esito: falliti, altrimenti superati (dicendo se ci sono inconcludenti o ignorati). */
+  const outcomeTitle = c => c.failed ? `${c.failed} test falliti su ${c.total}${c.blocked ? ` · ${c.blocked} bloccati` : ''}`
+    : others(c) ? `Nessun test fallito · ${[c.blocked && `${c.blocked} bloccati`, c.inconclusive && `${c.inconclusive} inconcludenti`, c.ignored && `${c.ignored} ignorati`].filter(Boolean).join(', ')}`
+    : 'Tutti i test superati';
+
+  /** Riquadri dei conteggi per esito, con il link al filtro dell'esploratore. */
+  const statTiles = (c, linkBase) => `
+          <a class="stat" href="${linkBase}?f=all"><b>${c.total}</b><span>test</span></a>
+          <a class="stat ok" href="${linkBase}?f=passed"><b>${c.passed}</b><span>superati</span></a>
+          <a class="stat ko" href="${linkBase}?f=failed"><b>${c.failed}</b><span>falliti</span></a>
+          ${c.blocked ? `<a class="stat blk" href="${linkBase}?f=blocked"><b>${c.blocked}</b><span>bloccati</span></a>` : ''}
+          ${c.inconclusive ? `<a class="stat inc" href="${linkBase}?f=inconclusive"><b>${c.inconclusive}</b><span>inconcludenti</span></a>` : ''}
+          ${c.ignored ? `<a class="stat ign" href="${linkBase}?f=ignored"><b>${c.ignored}</b><span>ignorati</span></a>` : ''}`;
+
   function hero(run, linkBase) {
     const c = run.counts, ok = c.failed === 0;
-    const sut = run.sut || {};
     const meta = [
-      ['Build', run.build], ['Versione', sut.version], ['Commit', sut.commit && (sut.commit + (sut.branch ? '@' + sut.branch : ''))],
-      ['Ambiente', sut.environment], ['Inizio', dt(run.start)], ['Durata', dur(run.durationMs)], ['Macchina', run.machine],
+      ['Versione', run.version], ['Inizio', dt(run.start)], ['Fine', dt(run.end)], ['Durata', dur(run.durationMs)],
     ].filter(x => x[1]);
     return `<section class="card hero">
       ${donut(c)}
       <div class="break">
-        <div class="hero-title ${ok ? 'ok' : 'ko'}">${ic(ok ? 'ok' : 'ko')}${ok ? 'Tutti i test superati' : `${c.failed} test falliti su ${c.total}`}</div>
-        <div class="hero-meta">${meta.map(([k, v]) => `<span>${k} <b class="${k === 'Commit' || k === 'Build' ? 'mono' : ''}">${esc(v)}</b></span>`).join('')}</div>
-        <div class="stats">
-          <a class="stat" href="${linkBase}"><b>${c.total}</b><span>totali</span></a>
-          <a class="stat ok" href="${linkBase}?f=passed"><b>${c.passed}</b><span>superati</span></a>
-          <a class="stat ko" href="${linkBase}?f=failed"><b>${c.failed}</b><span>falliti</span></a>
-          <div class="stat"><b>${c.defects}</b><span>difetti noti</span></div>
+        <div class="hero-title ${ok ? 'ok' : 'ko'}">${ic(ok ? 'ok' : 'ko')}${esc(outcomeTitle(c))}</div>
+        <div class="hero-meta">${meta.map(([k, v]) => `<span>${k} <b class="${k === 'Versione' ? 'mono' : ''}">${esc(v)}</b></span>`).join('')}</div>
+        <div class="stats">${statTiles(c, linkBase)}
+          <a class="stat def" href="${linkBase}?f=defect"><b>${c.defects}</b><span>difetti noti</span></a>
         </div>
       </div>
     </section>`;
@@ -240,18 +300,18 @@
   function diffCard(run, linkBase) {
     const d = run.diff;
     if (!d.baselineRunId) {
-      return `<section class="card"><h2 class="card-h">${ic('layers')}Confronto con la build precedente</h2>
-        <div class="empty">Prima build del sistema nello storico: nessun confronto possibile. Dalla prossima build compariranno regressioni e fix.</div></section>`;
+      return `<section class="card"><h2 class="card-h">${ic('layers')}Confronto con la versione precedente</h2>
+        <div class="empty">Prima versione del sistema nello storico: nessun confronto possibile. Dalla prossima versione compariranno possibili regressioni e fix.</div></section>`;
     }
     const base = runById(d.baselineRunId);
     const tile = (key, n) => {
       const m = CHANGES[key];
       return `<a class="tile ${m.cls} ${n ? '' : 'zero'}" href="${linkBase}?f=${key}"><b>${n}</b><span>${m.plural}</span></a>`;
     };
-    return `<section class="card"><h2 class="card-h">${ic('layers')}Confronto con la build precedente</h2>
-      <div class="diff-head">Build <b class="mono">${esc(run.build)}</b> rispetto a <b class="mono">${esc(d.baselineBuild)}</b>
+    return `<section class="card"><h2 class="card-h">${ic('layers')}Confronto con la versione precedente</h2>
+      <div class="diff-head">Versione <b class="mono">${esc(run.version)}</b> rispetto a <b class="mono">${esc(d.baselineVersion)}</b>
         <span>(esecuzione del ${esc(dtShort(base && base.start))})</span>${d.removed ? `<span>· ${d.removed} test non più presenti</span>` : ''}</div>
-      <div class="diff-tiles">${tile('regression', d.regressions)}${tile('fixed', d.fixed)}${tile('still-failing', d.stillFailing)}${tile('new', d.new)}${tile('flaky', d.flaky)}</div>
+      <div class="diff-tiles">${tile('regression', d.regressions)}${tile('fixed', d.fixed)}${tile('still-failing', d.stillFailing)}${tile('unverified', d.unverified || 0)}${tile('new', d.new)}${tile('flaky', d.flaky)}</div>
     </section>`;
   }
 
@@ -265,8 +325,9 @@
     trends.push({ list, currentId });
     return `<div class="trend" data-trend="${trends.length - 1}"></div>
       <div class="legend"><span><i style="background:var(--ok)"></i>Superati</span><span><i style="background:var(--ko)"></i>Falliti</span>
-      <span><i style="background:var(--ko);border-radius:50%"></i>Build con regressioni</span><span><i style="background:var(--ok);border-radius:50%"></i>Build con fix</span>
-      <span><i style="background:var(--surface-3)"></i>Fasce: build del sistema</span></div>`;
+      <span><i style="background:var(--blk)"></i>Bloccati</span><span><i style="background:var(--inc)"></i>Inconcludenti</span><span><i style="background:var(--skip)"></i>Ignorati</span>
+      <span><i style="background:var(--ko);border-radius:50%"></i>Versioni con possibili regressioni</span><span><i style="background:var(--ok);border-radius:50%"></i>Versioni con fix</span>
+      <span><i style="background:var(--surface-3)"></i>Fasce: versioni del sistema</span></div>`;
   }
   function paintTrends() {
     document.querySelectorAll('[data-trend]').forEach(el => {
@@ -281,46 +342,52 @@
   // Anche quando cambia la larghezza del contenuto senza un resize della finestra (pannelli, zoom, iframe).
   if (window.ResizeObserver) new ResizeObserver(repaintSoon).observe(document.getElementById('app'));
 
-  /** Istogramma delle esecuzioni, raggruppate per build del sistema (fasce alterne). */
+  /** Istogramma delle esecuzioni, raggruppate per versione del sistema (fasce alterne). */
   function trendSvg(list, currentId, W) {
     const H = 220, top = 38, bottom = 30, left = 34;
     const max = Math.max(1, ...list.map(r => r.counts.total));
     const n = list.length, slot = (W - left) / n, bw = Math.max(3, Math.min(34, slot * 0.62));
     const y = v => top + (H - top - bottom) * (1 - v / max);
     let bands = '', labels = '', cols = '', marks = '';
-    // Fasce alterne: una per ogni gruppo di esecuzioni consecutive sulla stessa build.
+    // Fasce alterne: una per ogni gruppo di esecuzioni consecutive sulla stessa versione.
     for (let i = 0, g = 0; i < n; g++) {
       let j = i;
-      while (j + 1 < n && list[j + 1].build === list[i].build) j++;
+      while (j + 1 < n && list[j + 1].version === list[i].version) j++;
       const x0 = left + i * slot, x1 = left + (j + 1) * slot;
       if (g % 2 === 0) bands += `<rect class="band" x="${x0}" y="${top - 34}" width="${x1 - x0}" height="${H - top - bottom + 34}" rx="6"/>`;
-      const label = list[i].build.length > 16 ? list[i].build.slice(0, 15) + '…' : list[i].build;
-      labels += `<text class="build-label" x="${(x0 + x1) / 2}" y="${top - 22}" text-anchor="middle"><title>${esc(list[i].build)}</title>${esc(x1 - x0 > 44 ? label : '')}</text>`;
+      // Quanto entra nella fascia (~6,5 px per carattere); se non entra resta la coda, che
+      // distingue le versioni (l'inizio, "5.0.2.20.", è spesso uguale).
+      const v = list[i].version, fit = Math.floor((x1 - x0 - 6) / 6.5);
+      const label = fit < 4 ? '' : v.length <= fit ? v : '…' + v.slice(v.length - fit + 1);
+      labels += `<text class="version-label" x="${(x0 + x1) / 2}" y="${top - 22}" text-anchor="middle"><title>${esc(v)}</title>${esc(label)}</text>`;
       i = j + 1;
     }
     list.forEach((r, k) => {
       const cx = left + k * slot + slot / 2, x = cx - bw / 2, c = r.counts;
-      const yOk = y(c.passed), yKo = y(c.passed + c.failed), ySkip = y(c.total);
-      const tip = `${dt(r.start)} · build ${r.build}\n${c.passed} superati, ${c.failed} falliti su ${c.total}` +
-        (r.diff.baselineRunId ? `\n${r.diff.regressions} regressioni, ${r.diff.fixed} corretti` : '');
+      const nb = c.passed + c.failed + (c.blocked || 0);
+      const yOk = y(c.passed), yKo = y(c.passed + c.failed), yBlk = y(nb), yInc = y(nb + (c.inconclusive || 0)), ySkip = y(c.total);
+      const tip = `${dt(r.start)} · versione ${r.version}\n${countsText(c)}` +
+        (r.diff.baselineRunId ? `\n${r.diff.regressions} possibili regressioni, ${r.diff.fixed} corretti` : '');
       cols += `<a class="col ${r.id === currentId ? 'current' : ''}" href="#/run/${encodeURIComponent(r.id)}"><title>${esc(tip)}</title>
         <rect class="bar-ok" x="${x}" y="${yOk}" width="${bw}" height="${Math.max(0, y(0) - yOk)}" rx="2"/>
         <rect class="bar-ko" x="${x}" y="${yKo}" width="${bw}" height="${Math.max(0, yOk - yKo)}"/>
-        <rect class="bar-skip" x="${x}" y="${ySkip}" width="${bw}" height="${Math.max(0, yKo - ySkip)}"/>
+        <rect class="bar-blk" x="${x}" y="${yBlk}" width="${bw}" height="${Math.max(0, yKo - yBlk)}"/>
+        <rect class="bar-inc" x="${x}" y="${yInc}" width="${bw}" height="${Math.max(0, yBlk - yInc)}"/>
+        <rect class="bar-skip" x="${x}" y="${ySkip}" width="${bw}" height="${Math.max(0, yInc - ySkip)}"/>
         <rect class="outline" x="${x - 2}" y="${ySkip - 2}" width="${bw + 4}" height="${y(0) - ySkip + 4}" rx="3" fill="none"/></a>`;
-      if (r.diff.regressions) marks += `<circle class="mark-reg" cx="${cx}" cy="${ySkip - 7}" r="3.5"><title>${r.diff.regressions} regressioni</title></circle>`;
+      if (r.diff.regressions) marks += `<circle class="mark-reg" cx="${cx}" cy="${ySkip - 7}" r="3.5"><title>${r.diff.regressions} possibili regressioni</title></circle>`;
       else if (r.diff.fixed) marks += `<circle class="mark-fix" cx="${cx}" cy="${ySkip - 7}" r="3.5"><title>${r.diff.fixed} corretti</title></circle>`;
     });
     const grid = [0, 0.5, 1].map(f => { const v = Math.round(max * f); return `<line class="grid-line" x1="${left}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${left - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`; }).join('');
     // Date sotto le barre (dd/MM/yy), diradate quando non c'è spazio (~60 px per etichetta).
     const every = Math.max(1, Math.ceil(60 / slot));
     const xl = list.map((r, k) => k % every === 0 ? `<text class="axis" x="${left + k * slot + slot / 2}" y="${H - 12}" text-anchor="middle">${esc(dateShort(r.start))}</text>` : '').join('');
-    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Esito delle esecuzioni per build">${bands}${grid}${cols}${marks}${labels}${xl}</svg>`;
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Esito delle esecuzioni per versione">${bands}${grid}${cols}${marks}${labels}${xl}</svg>`;
   }
 
   // ------------------------------------------------------------------ periodo
 
-  /** Periodi per le build: uno sprint canonico dura 2 settimane. */
+  /** Periodi per le versioni: uno sprint canonico dura 2 settimane. */
   const PERIODS = [['sprint', 'Ultimo sprint', 14], ['month', 'Ultimo mese', 30], ['year', 'Ultimo anno', 365], ['all', 'Massimo', 0]];
   const currentPeriod = () => { const p = store.get('qa:period', 'sprint'); return PERIODS.some(x => x[0] === p) ? p : 'sprint'; };
   const periodRuns = () => {
@@ -333,41 +400,62 @@
   const periodPicker = () => `<div class="period" role="group" aria-label="Periodo">${PERIODS.map(([k, l, d]) =>
     `<button type="button" class="period-btn ${k === currentPeriod() ? 'active' : ''}" data-period="${k}" ${d ? `title="Ultimi ${d} giorni"` : 'title="Tutto lo storico"'} aria-pressed="${k === currentPeriod()}">${l}</button>`).join('')}</div>`;
 
-  function buildRows(limit, inPeriod) {
-    // Una riga per build: stato all'ultima esecuzione di quella build (solo build con esecuzioni nel periodo).
+  /**
+   * Colonne dei conteggi nelle tabelle: test, superati, falliti e, se nella tabella ce n'è
+   * almeno uno, bloccati, inconcludenti e ignorati (con la classe <paramref>hide</paramref>, che li
+   * nasconde sugli schermi stretti).
+   */
+  function countCols(list, hide = 'col-sm') {
+    const blk = list.some(c => c.blocked), inc = list.some(c => c.inconclusive), ign = list.some(c => c.ignored);
+    const n = (v, cls) => `<span class="count ${v ? cls : 'zero'}">${v || 0}</span>`;
+    return {
+      head: '<th class="num">Test</th><th class="num">Superati</th><th class="num">Falliti</th>' + (blk ? `<th class="num ${hide}">Bloccati</th>` : '') +
+        (inc ? `<th class="num ${hide}" title="Inconcludenti">Inconcl.</th>` : '') + (ign ? `<th class="num ${hide}">Ignorati</th>` : ''),
+      cells: c => `<td class="num"><b>${c.total}</b></td><td class="num">${n(c.passed, 'ok')}</td><td class="num">${n(c.failed, 'ko')}</td>` +
+        (blk ? `<td class="num ${hide}">${n(c.blocked, 'blk')}</td>` : '') +
+        (inc ? `<td class="num ${hide}">${n(c.inconclusive, 'inc')}</td>` : '') + (ign ? `<td class="num ${hide}">${n(c.ignored, 'ign')}</td>` : ''),
+    };
+  }
+
+  function versionRows(limit, inPeriod) {
+    // Una riga per versione: stato all'ultima esecuzione di quella versione (solo versioni con esecuzioni nel periodo).
     const ids = new Set((inPeriod || runs).map(r => r.id));
-    const list = idx.builds.filter(b => b.runs.some(id => ids.has(id)));
-    if (!list.length) return '<div class="empty">Nessuna build nel periodo scelto.</div>';
-    const rows = list.slice().reverse().slice(0, limit || Infinity).map(b => {
+    const list = idx.versions.filter(b => b.runs.some(id => ids.has(id)));
+    if (!list.length) return '<div class="empty">Nessuna versione nel periodo scelto.</div>';
+    const shown = list.slice().reverse().slice(0, limit || Infinity);
+    const cc = countCols(shown.map(b => runById(b.runs[b.runs.length - 1]).counts));
+    const rows = shown.map(b => {
       const last = runById(b.runs[b.runs.length - 1]);
       const first = runById(b.runs[0]);
       const d = last.diff;
       const cnt = (n, cls) => `<span class="count ${n ? cls : 'zero'}">${d.baselineRunId ? n : '—'}</span>`;
       return `<tr>
-        <td><a class="mono" href="#/run/${encodeURIComponent(last.id)}">${esc(b.build)}</a><div class="muted" style="font-size:12px">${esc(b.version || '')}</div></td>
-        <td class="col-md">${esc(dateShort(first.start))} ${esc(dtShort(first.start).split(' ')[1])}${b.runs.length > 1 ? ` → ${esc(dateShort(last.start))} ${esc(dtShort(last.start).split(' ')[1])}` : ''}</td>
-        <td class="num col-sm">${b.runs.length}</td>
-        <td class="num"><span class="count ${last.counts.failed ? 'ko' : 'ok'}">${last.counts.passed}/${last.counts.total}</span></td>
+        <td class="nowrap"><a class="mono" href="#/run/${encodeURIComponent(last.id)}">${esc(b.version)}</a></td>
+        <td class="col-lg">${esc(dateShort(first.start))} ${esc(dtShort(first.start).split(' ')[1])}${b.runs.length > 1 ? ` → ${esc(dateShort(last.start))} ${esc(dtShort(last.start).split(' ')[1])}` : ''}</td>
+        <td class="num col-lg">${b.runs.length}</td>
+        ${cc.cells(last.counts)}
         <td class="num">${cnt(d.regressions, 'reg')}</td>
-        <td class="num">${cnt(d.fixed, 'fix')}</td>
+        <td class="num col-xs">${cnt(d.fixed, 'fix')}</td>
         <td class="num col-xs">${cnt(d.stillFailing, 'still')}</td>
         <td class="num col-xs">${cnt(d.flaky, 'flaky')}</td>
       </tr>`;
     }).join('');
-    return `<table class="table"><thead><tr><th>Build</th><th class="col-md">Esecuzioni (date)</th><th class="num col-sm">N.</th><th class="num">Superati</th>
-      <th class="num">Regressioni</th><th class="num">Corretti</th><th class="num col-xs">Ancora falliti</th><th class="num col-xs">Instabili</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<table class="table"><thead><tr><th>Versione</th><th class="col-lg">Esecuzioni (date)</th><th class="num col-lg" title="Numero di esecuzioni">N.</th>${cc.head}
+      <th class="num wrap" title="Possibili regressioni"><span class="th-long">Possibili regressioni</span><span class="th-short">Poss. regr.</span></th><th class="num col-xs">Corretti</th><th class="num col-xs wrap">Ancora falliti</th><th class="num col-xs">Instabili</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   function runRows(limit, inPeriod) {
     const list = inPeriod || runs;
     if (!list.length) return '<div class="empty">Nessuna esecuzione nel periodo scelto.</div>';
-    const rows = list.slice().reverse().slice(0, limit || Infinity).map(r => `<tr>
+    const shown = list.slice().reverse().slice(0, limit || Infinity);
+    const cc = countCols(shown.map(r => r.counts));
+    const rows = shown.map(r => `<tr>
       <td>${statusIcon(r.counts.failed ? 'failed' : 'passed')} <a href="#/run/${encodeURIComponent(r.id)}">${esc(dt(r.start))}</a></td>
-      <td class="mono col-sm break">${esc(r.build)}</td>
-      <td class="num"><span class="count ok">${r.counts.passed}</span> <span class="count ${r.counts.failed ? 'ko' : 'zero'}">${r.counts.failed}</span> <span class="muted">/ ${r.counts.total}</span></td>
+      <td class="mono col-sm break">${esc(r.version)}</td>
+      ${cc.cells(r.counts)}
       <td class="num col-xs">${r.diff.baselineRunId ? `<span class="count ${r.diff.regressions ? 'reg' : 'zero'}">${r.diff.regressions}</span>` : '—'}</td>
       <td class="num col-md">${esc(dur(r.durationMs))}</td></tr>`).join('');
-    return `<table class="table"><thead><tr><th>Esecuzione</th><th class="col-sm">Build</th><th class="num">Esito</th><th class="num col-xs">Regressioni</th><th class="num col-md">Durata</th></tr></thead><tbody>${rows}</tbody></table>`;
+    return `<table class="table"><thead><tr><th>Esecuzione</th><th class="col-sm">Versione</th>${cc.head}<th class="num col-xs wrap">Possibili regressioni</th><th class="num col-md">Durata</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   // ================================================================== pagine
@@ -380,14 +468,14 @@
     trends.length = 0;
     app.innerHTML = `
       <div class="page-head"><div><h1 class="page-title">Panoramica</h1>
-        <div class="page-sub">Ultima esecuzione del ${esc(dt(run.start))} sulla build <span class="mono">${esc(run.build)}</span></div></div>
+        <div class="page-sub">Ultima esecuzione del ${esc(dt(run.start))} sulla versione <span class="mono">${esc(run.version)}</span></div></div>
         ${periodPicker()}</div>
       <div class="stack">
       ${hero(run, base)}
       ${diffCard(run, base)}
       <div id="home-changes"></div>
-      <section class="card"><h2 class="card-h">${ic('layers')}Andamento per build del sistema<span class="note">${periodLabel()} · ${inPeriod.length} esecuzion${inPeriod.length === 1 ? 'e' : 'i'}</span></h2>${trendChart(inPeriod.slice(-60), run.id)}</section>
-      <section class="card"><h2 class="card-h">${ic('layers')}Regressioni e fix per build<a class="note" href="#/builds">tutte le build</a></h2>${buildRows(8, inPeriod)}</section>
+      <section class="card"><h2 class="card-h">${ic('layers')}Andamento per versione del sistema<span class="note">${periodLabel()} · ${inPeriod.length} esecuzion${inPeriod.length === 1 ? 'e' : 'i'}</span></h2>${trendChart(inPeriod.slice(-60), run.id)}</section>
+      <section class="card"><h2 class="card-h">${ic('layers')}Possibili regressioni e fix per versione<a class="note" href="#/versions">tutte le versioni</a></h2>${versionRows(8, inPeriod)}</section>
       <section class="card"><h2 class="card-h">${ic('history')}Esecuzioni<span class="note">${periodLabel()} · ultime 10</span></h2>${runRows(10, inPeriod)}</section>
       </div>`;
     paintTrends();
@@ -400,23 +488,23 @@
     }
   }
 
-  function renderBuilds() {
-    setNav('builds');
+  function renderVersions() {
+    setNav('versions');
     const inPeriod = periodRuns();
-    const nBuilds = new Set(inPeriod.map(r => r.build)).size;
+    const nVersions = new Set(inPeriod.map(r => r.version)).size;
     trends.length = 0;
     app.innerHTML = `
-      <div class="page-head"><div><h1 class="page-title">Build del sistema</h1>
-        <div class="page-sub">Per ogni build, l'ultima esecuzione confrontata con l'ultima della build precedente. Chi fa QA segna regressioni e fix; la correzione spetta ai dev.</div></div>
+      <div class="page-head"><div><h1 class="page-title">Versioni del sistema</h1>
+        <div class="page-sub">Per ogni versione, l'ultima esecuzione confrontata con l'ultima della versione precedente. Chi fa QA segna possibili regressioni e fix; la correzione spetta ai dev.</div></div>
         ${periodPicker()}</div>
       <div class="stack">
       <section class="card"><h2 class="card-h">${ic('layers')}Andamento<span class="note">${periodLabel()} · ${inPeriod.length} esecuzion${inPeriod.length === 1 ? 'e' : 'i'}</span></h2>${trendChart(inPeriod, null)}</section>
-      <section class="card"><h2 class="card-h">${ic('layers')}Regressioni e fix per build<span class="note">${periodLabel()} · ${nBuilds} build</span></h2>${buildRows(0, inPeriod)}</section>
+      <section class="card"><h2 class="card-h">${ic('layers')}Possibili regressioni e fix per versione<span class="note">${periodLabel()} · ${nVersions} version${nVersions === 1 ? 'e' : 'i'}</span></h2>${versionRows(0, inPeriod)}</section>
       </div>`;
     paintTrends();
   }
 
-  /** Elenchi dei test cambiati (regressioni, corretti, …) di un'esecuzione. */
+  /** Elenchi dei test cambiati (possibili regressioni, corretti, …) di un'esecuzione. */
   function changeLists(data, run, kinds, limit) {
     return kinds.map(kind => {
       const m = CHANGES[kind];
@@ -426,8 +514,8 @@
       return `<section class="card"><h2 class="card-h ${m.cls}">${ic(m.icon)}${m.plural}<span class="note">${items.length}</span></h2>
         <div class="chg-list">${shown.map(x => {
           const t = x.test, c = x.change;
-          const extra = kind === 'still-failing' && c.failingSinceBuild ? `fallisce dalla build ${c.failingSinceBuild}`
-            : kind === 'regression' ? `passava sulla build ${run.diff.baselineBuild}` : kind === 'fixed' ? `falliva sulla build ${run.diff.baselineBuild}` : '';
+          const extra = kind === 'still-failing' && c.failingSinceVersion ? `fallisce dalla versione ${c.failingSinceVersion}`
+            : kind === 'regression' ? `passava sulla versione ${run.diff.baselineVersion}` : kind === 'fixed' ? `falliva sulla versione ${run.diff.baselineVersion}` : '';
           return `<a class="chg ${m.cls}" href="#/run/${encodeURIComponent(run.id)}/test/${encodeURIComponent(t.key)}">${statusIcon(t.status)}
             <span class="chg-main"><span class="chg-title">${esc(t.title)}</span>
             <span class="chg-meta">${esc(suiteOf(t))}${t.arguments ? ' · ' + esc(t.arguments) : ''}${extra ? ' · ' + esc(extra) : ''}${t.defect ? ' · ' + esc(t.defect.id) : ''}</span></span></a>`;
@@ -441,12 +529,16 @@
     ['all', 'Tutti', x => true, ''],
     ['failed', 'Falliti', x => x.test.status === 'failed', 'var(--ko-text)'],
     ['passed', 'Superati', x => x.test.status === 'passed', 'var(--ok-text)'],
-    ['regression', 'Regressioni', x => x.change && x.change.change === 'regression', 'var(--ko-text)'],
+    ['blocked', 'Bloccati', x => statusOf(x.test.status) === 'blocked', 'var(--blk-text)'],
+    ['inconclusive', 'Inconcludenti', x => statusOf(x.test.status) === 'inconclusive', 'var(--inc-text)'],
+    ['ignored', 'Ignorati', x => statusOf(x.test.status) === 'ignored', 'var(--skip-text)'],
+    ['regression', 'Possibili regressioni', x => x.change && x.change.change === 'regression', 'var(--ko-text)'],
     ['fixed', 'Corretti', x => x.change && x.change.change === 'fixed', 'var(--ok-text)'],
     ['still-failing', 'Ancora falliti', x => x.change && x.change.change === 'still-failing', 'var(--warn-text)'],
+    ['unverified', 'Non più verificati', x => x.change && x.change.change === 'unverified', 'var(--inc-text)'],
     ['new', 'Nuovi', x => x.change && x.change.change === 'new', 'var(--info-text)'],
     ['flaky', 'Instabili', x => x.change && x.change.flaky, 'var(--flaky-text)'],
-    ['defect', 'Difetti noti', x => !!x.test.defect, 'var(--flaky-text)'],
+    ['defect', 'Difetti noti', x => !!(x.test.defect || x.test.blockedBy), 'var(--defect-text)'],
   ];
   const RANK = { regression: 0, 'still-failing': 1, new: 2 };
 
@@ -454,7 +546,11 @@
     const run = runById(runId);
     if (!run) { app.innerHTML = `<div class="empty">Esecuzione non trovata: ${esc(runId)}. <a href="#/">Torna alla panoramica</a></div>`; return; }
     setNav('run', run.id);
-    app.innerHTML = '<div class="loading">Caricamento dell\'esecuzione…</div>';
+    // Già nella pagina dei test (altro test, o lo stesso test in un'altra esecuzione): si tengono la
+    // posizione della lista dei test e quella della pagina (vedi keepScroll in fondo).
+    const prevList = document.getElementById('tree-list');
+    const keep = prevList ? { list: prevList.scrollTop, y: window.scrollY } : null;
+    if (!cache[run.id]) app.innerHTML = '<div class="loading">Caricamento dell\'esecuzione…</div>';
     let data;
     try { data = await loadRun(run.id); } catch (e) { app.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
     const sel = testKey ? data.byKey[testKey] : null;
@@ -472,7 +568,7 @@
     const crumbs = `<div class="crumbs"><a href="#/">Panoramica</a>${ic('chevRight')}<a href="#/run/${encodeURIComponent(run.id)}">Esecuzione del ${esc(dtShort(run.start))}</a>${sel ? ic('chevRight') + esc(suiteOf(sel.test)) : ''}</div>`;
     app.innerHTML = `
       <div class="page-head"><div>${crumbs}<h1 class="page-title">Esecuzione del ${esc(dt(run.start))}</h1>
-        <div class="page-sub">Build <span class="mono">${esc(run.build)}</span>${run.sut && run.sut.version ? ' · versione ' + esc(run.sut.version) : ''} · ${run.counts.passed}/${run.counts.total} superati · ${esc(dur(run.durationMs))}</div></div>
+        <div class="page-sub">Versione <span class="mono">${esc(run.version)}</span> · ${esc(countsText(run.counts))} · ${esc(dur(run.durationMs))}</div></div>
         <div class="page-actions">${runStepper(run, sel)}<span id="run-admin"></span></div></div>
       <div class="split ${sel ? 'has-test' : ''}">
         <aside class="tree" aria-label="Test">
@@ -481,7 +577,7 @@
             <div class="chips" role="group" aria-label="Filtra">${FILTERS.filter(([k]) => ['all', 'failed', 'passed'].includes(k) || counts[k] > 0).map(([k, label, , color]) =>
               `<button type="button" class="chip" data-f="${k}" style="${color ? '--c-text:' + color : ''}">${label} <b>${counts[k]}</b></button>`).join('')}</div>
             <div class="tree-bar">
-              <select id="sort" aria-label="Ordina"><option value="status">Prima regressioni e falliti</option><option value="name">Per nome</option><option value="duration">Più lenti prima</option></select>
+              <select id="sort" aria-label="Ordina"><option value="status">Prima possibili regressioni e falliti</option><option value="name">Per nome</option><option value="duration">Più lenti prima</option></select>
               <button type="button" class="icon-btn" id="expand" title="Espandi le suite">${ic('expand')}</button>
               <button type="button" class="icon-btn" id="collapse" title="Comprimi le suite">${ic('collapse')}</button>
             </div>
@@ -503,14 +599,18 @@
         <div class="detail" id="detail">${sel ? testDetail(run, data, sel) : runOverview(run, data)}</div>
       </div>`;
 
-    initTree(run, data, state, key, sel);
+    initTree(run, data, state, key, sel, keep && keep.list);
     serverInfo.then(info => {
       const el = document.getElementById('run-admin');
       if (el && info && info.canDelete)
         el.innerHTML = `<button type="button" class="btn danger-ghost" data-delete-run="${esc(run.id)}" title="Elimina questa esecuzione dallo storico">${ic('trash')}Elimina</button>`;
     });
     const detailEl = document.getElementById('detail');
-    if (sel) { initTabs(detailEl, 'qa:testtab', 'overview'); initTestNav(); }
+    if (sel) {
+      // ?tab=… apre una scheda del test (lo storico porta al Dettaglio dell'altra esecuzione).
+      if (params.has('tab')) store.set('qa:testtab', params.get('tab'));
+      initTabs(detailEl, 'qa:testtab', 'overview'); initTestNav();
+    }
     else {
       // ?tab=… e ?seg=… nell'indirizzo aprono una scheda e un elenco (link condivisibili).
       if (params.has('tab')) store.set('qa:ovtab', params.get('tab'));
@@ -518,21 +618,35 @@
       initTabs(detailEl, 'qa:ovtab', 'changes');
       initSegments(detailEl.querySelector('.overview'));
     }
-    window.scrollTo(0, 0);
+    keepScroll(keep);
+  }
+
+  /**
+   * Posizione della pagina dopo aver ridisegnato la pagina dei test. Arrivando da un'altra pagina, in
+   * cima. Restando nella pagina dei test, la pagina resta dov'era fino al punto in cui l'albero è
+   * fisso (così la lista non salta) e il dettaglio riparte dal suo inizio. Sugli schermi stretti
+   * (dettaglio sopra l'albero, niente parti fisse) in cima.
+   */
+  function keepScroll(keep) {
+    if (!keep || matchMedia('(max-width: 991.98px)').matches) { window.scrollTo(0, 0); return; }
+    const split = document.querySelector('.split');
+    const topbar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 56;
+    const stick = split.getBoundingClientRect().top + window.scrollY - topbar - 16;
+    window.scrollTo(0, Math.max(0, Math.min(keep.y, stick)));
   }
 
   function leaf(run, x, sel) {
     const t = x.test, c = x.change || {};
-    const search = [t.title, t.method, suiteOf(t), t.arguments, t.defect && t.defect.id, t.defect && t.defect.title, c.change].join(' ').toLowerCase();
-    const sub = changeBadge(c) + (t.defect ? `<span class="badge defect">${esc(t.defect.id)}</span>` : '') + (t.arguments ? `<span class="mono">${esc(t.arguments)}</span>` : '');
+    const search = [t.title, t.method, suiteOf(t), t.arguments, t.defect && t.defect.id, t.defect && t.defect.title, t.blockedBy && t.blockedBy.id, t.blockedBy && t.blockedBy.title, c.change].join(' ').toLowerCase();
+    const sub = changeBadge(c) + (t.defect ? `<span class="badge defect">${esc(t.defect.id)}</span>` : '') + blockedBadge(t) + (t.arguments ? `<span class="mono">${esc(t.arguments)}</span>` : '');
     return `<li class="leaf ${sel && sel.test.key === t.key ? 'selected' : ''}" data-i="${x.i}" data-search="${esc(search)}" data-name="${esc(t.title.toLowerCase())}"
-        data-dur="${t.durationMs}" data-rank="${t.status === 'failed' ? (RANK[c.change] ?? 1) : c.change === 'fixed' ? 3 : 4}">
+        data-dur="${t.durationMs}" data-rank="${t.status === 'failed' ? (RANK[c.change] ?? 1) : ({ blocked: 3, inconclusive: 4 }[statusOf(t.status)] ?? (c.change === 'fixed' ? 5 : t.status === 'passed' ? 6 : 7))}">
       <a href="#/run/${encodeURIComponent(run.id)}/test/${encodeURIComponent(t.key)}">${statusIcon(t.status)}
         <span class="leaf-t"><span class="leaf-title">${esc(t.title)}</span>${sub ? `<span class="leaf-sub">${sub}</span>` : ''}</span>
         <span class="leaf-d">${esc(dur(t.durationMs))}</span></a></li>`;
   }
 
-  function initTree(run, data, state, key, sel) {
+  function initTree(run, data, state, key, sel, keepList) {
     const list = document.getElementById('tree-list');
     const leaves = [...list.querySelectorAll('.leaf')];
     const suites = [...list.querySelectorAll('.suite')];
@@ -554,25 +668,41 @@
     function apply(jump) {
       suites.forEach(s => { const ul = s.querySelector('.leaves'); [...ul.children].sort(cmp[state.sort] || cmp.status).forEach(li => ul.appendChild(li)); });
       const visible = suites.flatMap(s => [...s.querySelectorAll('.leaf')].filter(pass));
-      window.__qaOrder = visible;
-      const per = state.size > 0 ? state.size : Math.max(1, visible.length);
-      const pages = Math.max(1, Math.ceil(visible.length / per));
-      if (jump) { const i = visible.findIndex(li => li.classList.contains('selected')); if (i >= 0) state.page = Math.floor(i / per) + 1; }
+      window.__qaOrder = visible;   // test precedente/successivo: tutti i filtrati, anche nelle suite chiuse
+      // Righe da paginare: una suite chiusa conta come una riga sola (la sua intestazione) e i
+      // suoi test non finiscono in nessuna pagina; una suite aperta conta i suoi test filtrati.
+      const items = [], open = new Map();
+      suites.forEach(s => {
+        const match = [...s.querySelectorAll('.leaf')].filter(pass);
+        const collapsed = state.collapsed.includes(s.dataset.suite);
+        open.set(s, { match, collapsed });
+        if (!match.length) return;
+        if (collapsed) items.push({ s });
+        else match.forEach(li => items.push({ s, li }));
+      });
+      const per = state.size > 0 ? state.size : Math.max(1, items.length);
+      const pages = Math.max(1, Math.ceil(items.length / per));
+      if (jump) { const i = items.findIndex(x => x.li && x.li.classList.contains('selected')); if (i >= 0) state.page = Math.floor(i / per) + 1; }
       state.page = Math.min(Math.max(1, state.page), pages);
-      const from = (state.page - 1) * per, shown = new Set(visible.slice(from, from + per));
+      const from = (state.page - 1) * per, page = items.slice(from, from + per);
+      const shown = new Set(page.filter(x => x.li).map(x => x.li)), heads = new Set(page.map(x => x.s));
       leaves.forEach(li => { li.hidden = !shown.has(li); });
       suites.forEach(s => {
-        const own = [...s.querySelectorAll('.leaf')];
-        s.hidden = !own.some(li => shown.has(li));
-        const match = own.filter(pass).map(li => data.tests[+li.dataset.i].test.status);
-        const ko = match.filter(x => x === 'failed').length, ok = match.filter(x => x === 'passed').length;
-        s.querySelector('.suite-counts').innerHTML = (ko ? `<span class="count ko">${ko}</span>` : '') + `<span class="count ok">${ok}</span>`;
-        const collapsed = state.collapsed.includes(s.dataset.suite);
+        const { match, collapsed } = open.get(s);
+        s.hidden = !heads.has(s);
+        const c = countsOf(match.map(li => data.tests[+li.dataset.i].test));
+        s.querySelector('.suite-counts').innerHTML = (c.failed ? `<span class="count ko" title="falliti">${c.failed}</span>` : '') +
+          (c.blocked ? `<span class="count blk" title="bloccati">${c.blocked}</span>` : '') +
+          (c.inconclusive ? `<span class="count inc" title="inconcludenti">${c.inconclusive}</span>` : '') +
+          (c.ignored ? `<span class="count ign" title="ignorati">${c.ignored}</span>` : '') +
+          (c.passed || c.passed === c.total ? `<span class="count ok" title="superati">${c.passed}</span>` : '');
         s.classList.toggle('collapsed', collapsed);
         s.querySelector('.suite-h').setAttribute('aria-expanded', String(!collapsed));
       });
+      const hiddenInClosed = visible.length - items.filter(x => x.li).length;
       $('tree-empty').hidden = visible.length > 0;
-      $('range').textContent = visible.length ? `${from + 1}–${Math.min(from + per, visible.length)} di ${visible.length}` : '0 test';
+      $('range').textContent = !visible.length ? '0 test'
+        : `${visible.length} test${hiddenInClosed ? ` · ${hiddenInClosed} in suite chiuse` : ''}`;
       $('page').textContent = `${state.page}/${pages}`;
       $('prev').disabled = state.page <= 1;
       $('next').disabled = state.page >= pages;
@@ -596,8 +726,13 @@
     const selected = list.querySelector('.leaf.selected');
     if (selected) state.collapsed = state.collapsed.filter(n => n !== selected.closest('.suite').dataset.suite);
     apply(!!selected);
-    if (selected) selected.scrollIntoView({ block: 'nearest' });
-    else list.scrollTop = store.get(key + ':scroll', 0);
+    // Lista: dove era (stessa pagina dei test) o dove era rimasta per questa esecuzione; il test
+    // scelto si porta in vista solo se è fuori, muovendo la lista e non la pagina (niente scrollIntoView).
+    list.scrollTop = keepList != null ? keepList : store.get(key + ':scroll', 0);
+    if (selected && !selected.hidden) {
+      const lr = selected.getBoundingClientRect(), r = list.getBoundingClientRect();
+      if (lr.top < r.top || lr.bottom > r.bottom) list.scrollTop += lr.top - r.top - Math.max(0, (r.height - lr.height) / 2);
+    }
     list.addEventListener('scroll', () => store.set(key + ':scroll', list.scrollTop), { passive: true });
   }
 
@@ -612,28 +747,31 @@
     return `<span class="delta ${good ? 'good' : 'bad'}">${d > 0 ? '+' : '−'}${esc(fmt(Math.abs(d)))}</span>`;
   }
 
-  /** Intestazione dell'esecuzione: anello, numeri con la differenza rispetto alla build di confronto, dati dell'ambiente. */
+  /** Intestazione dell'esecuzione: anello, numeri con la differenza rispetto alla versione di confronto, dati dell'ambiente. */
   function runHeader(run, base) {
     const c = run.counts, ok = c.failed === 0, sut = run.sut || {};
     const cmp = run.diff.baselineRunId ? runById(run.diff.baselineRunId) : null;
     const b = cmp ? cmp.counts : null;
     const chips = [
-      ['layers', 'Build', run.build, true], ['info', 'Versione', sut.version], ['route', 'Commit', sut.commit && (sut.commit + (sut.branch ? '@' + sut.branch : '')), true],
+      ['layers', 'Versione', run.version, true], ['route', 'Commit', sut.commit && (sut.commit + (sut.branch ? '@' + sut.branch : '')), true],
       ['server', 'Ambiente', sut.environment], ['clock', 'Inizio', dt(run.start)], ['grid', 'Macchina', run.machine],
     ].filter(x => x[2]);
     const kpi = (cls, value, label, d, href) => `<${href ? `a href="${href}"` : 'div'} class="kpi ${cls}"><span class="kpi-v">${value}${d}</span><span class="kpi-l">${label}</span></${href ? 'a' : 'div'}>`;
     return `<section class="card run-head ${ok ? 'ok' : 'ko'}">
       ${donut(c)}
       <div class="run-head-body">
-        <div class="hero-title ${ok ? 'ok' : 'ko'}">${ic(ok ? 'ok' : 'ko')}${ok ? 'Tutti i test superati' : `${c.failed} test falliti su ${c.total}`}</div>
+        <div class="hero-title ${ok ? 'ok' : 'ko'}">${ic(ok ? 'ok' : 'ko')}${esc(outcomeTitle(c))}</div>
         <div class="kpis">
-          ${kpi('', c.total, 'totali', delta(c.total, b && b.total), base + '?f=all')}
+          ${kpi('', c.total, 'test', delta(c.total, b && b.total), base + '?f=all')}
           ${kpi('ok', c.passed, 'superati', delta(c.passed, b && b.passed), base + '?f=passed')}
           ${kpi('ko', c.failed, 'falliti', delta(c.failed, b && b.failed, { goodWhenUp: false }), base + '?f=failed')}
+          ${c.blocked || (b && b.blocked) ? kpi('blk', c.blocked, 'bloccati', delta(c.blocked, b && b.blocked, { goodWhenUp: false }), base + '?f=blocked') : ''}
+          ${c.inconclusive || (b && b.inconclusive) ? kpi('inc', c.inconclusive, 'inconcludenti', delta(c.inconclusive, b && b.inconclusive, { goodWhenUp: false }), base + '?f=inconclusive') : ''}
+          ${c.ignored || (b && b.ignored) ? kpi('ign', c.ignored, 'ignorati', delta(c.ignored, b && b.ignored, { goodWhenUp: false }), base + '?f=ignored') : ''}
           ${kpi('', pct(c.passed, c.total), 'tasso di successo', b ? delta(100 * c.passed / c.total, 100 * b.passed / b.total, { fmt: v => v.toFixed(1).replace('.', ',') + ' pt', threshold: 0.05 }) : '')}
           ${kpi('', esc(dur(run.durationMs)), 'durata', b ? delta(run.durationMs, cmp.durationMs, { fmt: dur, goodWhenUp: false, threshold: Math.max(200, cmp.durationMs * 0.05) }) : '')}
         </div>
-        ${cmp ? `<div class="kpi-note">differenze rispetto alla build <span class="mono">${esc(cmp.build)}</span> (<a href="#/run/${encodeURIComponent(cmp.id)}">esecuzione del ${esc(dtShort(cmp.start))}</a>)</div>` : ''}
+        ${cmp ? `<div class="kpi-note">differenze rispetto alla versione <span class="mono">${esc(cmp.version)}</span> (<a href="#/run/${encodeURIComponent(cmp.id)}">esecuzione del ${esc(dtShort(cmp.start))}</a>)</div>` : ''}
         <div class="env-chips">${chips.map(([icon, k, v, mono]) => `<span class="env-chip" title="${esc(k)}">${ic(icon)}<span class="muted">${esc(k)}</span> <b class="${mono ? 'mono' : ''}">${esc(v)}</b></span>`).join('')}</div>
       </div>
     </section>`;
@@ -691,19 +829,20 @@
     const d = run.diff;
     const tests = data.tests;
 
-    // Cambiamenti rispetto alla build precedente: un elenco alla volta.
+    // Cambiamenti rispetto alla versione precedente: un elenco alla volta.
     const groups = [
-      ['regression', x => x.change && x.change.change === 'regression', () => `passava sulla build <span class="mono">${esc(d.baselineBuild)}</span>`],
-      ['fixed', x => x.change && x.change.change === 'fixed', () => `falliva sulla build <span class="mono">${esc(d.baselineBuild)}</span>`],
-      ['still-failing', x => x.change && x.change.change === 'still-failing', x => x.change.failingSinceBuild ? `fallisce dalla build <span class="mono">${esc(x.change.failingSinceBuild)}</span>` : ''],
+      ['regression', x => x.change && x.change.change === 'regression', () => `passava sulla versione <span class="mono">${esc(d.baselineVersion)}</span>`],
+      ['fixed', x => x.change && x.change.change === 'fixed', () => `falliva sulla versione <span class="mono">${esc(d.baselineVersion)}</span>`],
+      ['still-failing', x => x.change && x.change.change === 'still-failing', x => x.change.failingSinceVersion ? `fallisce dalla versione <span class="mono">${esc(x.change.failingSinceVersion)}</span>` : ''],
+      ['unverified', x => x.change && x.change.change === 'unverified', x => `passava sulla versione <span class="mono">${esc(d.baselineVersion)}</span>, ora è ${esc(statusLabel(x.test.status).toLowerCase())}`],
       ['new', x => x.change && x.change.change === 'new', x => x.test.status === 'failed' ? 'nuovo e già fallito' : 'nuovo'],
-      ['flaky', x => x.change && x.change.flaky, () => `esiti diversi sulla build <span class="mono">${esc(run.build)}</span>`],
+      ['flaky', x => x.change && x.change.flaky, () => `esiti diversi sulla versione <span class="mono">${esc(run.version)}</span>`],
     ].map(([k, fn, extra]) => ({ k, m: CHANGES[k], items: tests.filter(fn), extra }));
     const removed = d.removedKeys || [];
     const firstNonEmpty = (groups.find(g => g.items.length) || {}).k || (removed.length ? 'removed' : 'regression');
     const changesPanel = !d.baselineRunId
-      ? '<div class="empty">Prima build del sistema nello storico: nessun confronto, quindi nessun cambiamento da mostrare.</div>'
-      : `<div class="diff-head">Build <b class="mono">${esc(run.build)}</b> rispetto a <b class="mono">${esc(d.baselineBuild)}</b>
+      ? '<div class="empty">Prima versione del sistema nello storico: nessun confronto, quindi nessun cambiamento da mostrare.</div>'
+      : `<div class="diff-head">Versione <b class="mono">${esc(run.version)}</b> rispetto a <b class="mono">${esc(d.baselineVersion)}</b>
           <span>(<a href="#/run/${encodeURIComponent(d.baselineRunId)}">esecuzione del ${esc(dtShort((runById(d.baselineRunId) || {}).start))}</a>)</span></div>
         <div class="seg" role="group" aria-label="Tipo di cambiamento">${groups.map(g =>
           `<button type="button" class="seg-btn ${g.m.cls}" data-seg="${g.k}" ${g.items.length ? '' : 'disabled'}>${ic(g.m.icon)}${g.m.plural}<b>${g.items.length}</b></button>`).join('')}
@@ -719,26 +858,33 @@
     failed.forEach(x => { const c = failureCategory(x); (cats[c.key] = cats[c.key] || { ...c, items: [] }).items.push(x); });
     const catList = Object.values(cats).sort((a, b) => b.items.length - a.items.length);
     const defects = {};
-    failed.filter(x => x.test.defect).forEach(x => (defects[x.test.defect.id] = defects[x.test.defect.id] || { d: x.test.defect, n: 0 }).n++);
-    const catPanel = failed.length === 0 ? '<div class="empty">Nessun test fallito.</div>' : `
+    failed.filter(x => x.test.defect).forEach(x => (defects[x.test.defect.id] = defects[x.test.defect.id] || { d: x.test.defect, n: 0, b: 0 }).n++);
+    tests.filter(x => statusOf(x.test.status) === 'blocked' && x.test.blockedBy)
+      .forEach(x => (defects[x.test.blockedBy.id] = defects[x.test.blockedBy.id] || { d: x.test.blockedBy, n: 0, b: 0 }).b++);
+    const catPanel = failed.length === 0 && !Object.keys(defects).length ? '<div class="empty">Nessun test fallito.</div>' : `
       <div class="cats">${catList.map((c, i) => `<details class="cat ${c.cls}" ${i === 0 ? "open" : ""}>
         <summary>${ic(c.icon)}<span class="cat-label break">${esc(c.label)}</span>
           <span class="cat-bar"><span style="width:${100 * c.items.length / failed.length}%"></span></span><b>${c.items.length}</b>${ic('chevDown', 'chev')}</summary>
         <div class="trows">${c.items.map(x => testRow(run, x.test, `<span class="mono">${esc(failureCategory(x).detail)}</span>` + (x.change ? ' ' + changeBadge(x.change) : ''))).join('')}</div></details>`).join('')}</div>
-      ${Object.keys(defects).length ? `<h3 class="sub-h">${ic('bug')}Per difetto noto</h3><div class="defects">${Object.values(defects).sort((a, b) => b.n - a.n).map(v =>
-        `<a class="defect-chip" href="${base}?f=defect&q=${encodeURIComponent(v.d.id.toLowerCase())}"><b>${esc(v.d.id)}</b><span class="break">${esc(v.d.title)}</span><span class="count ko">${v.n}</span></a>`).join('')}</div>` : ''}`;
+      ${Object.keys(defects).length ? `<h3 class="sub-h">${ic('bug')}Per difetto noto</h3><div class="defects">${Object.values(defects).sort((a, b) => (b.n + b.b) - (a.n + a.b)).map(v =>
+        `<a class="defect-chip" href="${base}?f=defect&q=${encodeURIComponent(v.d.id.toLowerCase())}"><b>${esc(v.d.id)}</b><span class="break">${esc(v.d.title)}</span>${v.n ? `<span class="count ko" title="falliti">${v.n}</span>` : ''}${v.b ? `<span class="count blk" title="bloccati">${v.b}</span>` : ''}</a>`).join('')}</div>` : ''}`;
 
     // Suite.
     const suites = {};
     tests.forEach(x => (suites[suiteOf(x.test)] = suites[suiteOf(x.test)] || []).push(x));
-    const suitePanel = `<table class="table"><thead><tr><th>Suite</th><th class="num">Test</th><th class="num">Falliti</th><th class="num col-xs">Regressioni</th><th class="num col-sm">Durata</th><th class="col-md">Esito</th></tr></thead><tbody>
-      ${Object.keys(suites).sort((a, b) => a.localeCompare(b, 'it')).map(sn => {
-        const xs = suites[sn], p = xs.filter(x => x.test.status === 'passed').length, f = xs.filter(x => x.test.status === 'failed').length;
+    const suiteNames = Object.keys(suites).sort((a, b) => a.localeCompare(b, 'it'));
+    const suiteCounts = Object.fromEntries(suiteNames.map(sn => [sn, countsOf(suites[sn].map(x => x.test))]));
+    const sc = countCols(Object.values(suiteCounts), 'col-st');
+    const bar = c => `<span class="hbar-track" title="${esc(countsText(c))}">${[['ok', c.passed], ['ko', c.failed], ['blk', c.blocked], ['inc', c.inconclusive], ['skip', c.ignored]]
+      .map(([k, n]) => n ? `<span class="seg-${k}" style="width:${100 * n / c.total}%"></span>` : '').join('')}</span>`;
+    const suitePanel = `<table class="table"><thead><tr><th>Suite</th>${sc.head}<th class="num col-xs wrap">Possibili regressioni</th><th class="num col-sm">Durata</th><th class="col-md">Esito</th></tr></thead><tbody>
+      ${suiteNames.map(sn => {
+        const xs = suites[sn], c = suiteCounts[sn];
         const r = xs.filter(x => x.change && x.change.change === 'regression').length, ms = xs.reduce((s, x) => s + x.test.durationMs, 0);
-        return `<tr><td>${statusIcon(f ? 'failed' : 'passed')} <a href="${base}?f=all&q=${encodeURIComponent(sn.toLowerCase())}">${esc(sn)}</a></td>
-          <td class="num">${xs.length}</td><td class="num"><span class="count ${f ? 'ko' : 'zero'}">${f}</span></td>
+        return `<tr><td class="name">${statusIcon(c.failed ? 'failed' : c.blocked ? 'blocked' : c.passed ? 'passed' : c.inconclusive ? 'inconclusive' : 'ignored')} <a href="${base}?f=all&q=${encodeURIComponent(sn.toLowerCase())}">${esc(sn)}</a></td>
+          ${sc.cells(c)}
           <td class="num col-xs"><span class="count ${r ? 'reg' : 'zero'}">${d.baselineRunId ? r : '—'}</span></td><td class="num col-sm">${esc(dur(ms))}</td>
-          <td class="col-md"><span class="hbar-track"><span class="seg-ok" style="width:${100 * p / xs.length}%"></span><span class="seg-ko" style="width:${100 * f / xs.length}%"></span></span></td></tr>`;
+          <td class="col-md">${bar(c)}</td></tr>`;
       }).join('')}</tbody></table>`;
 
     // Durate: istogramma per fasce e i più lenti.
@@ -767,16 +913,16 @@
     // Ambiente.
     const sut = run.sut || {};
     const envRows = [
-      ['Sistema', sut.name], ['Build', sut.build], ['Versione', sut.version], ['Commit', sut.commit], ['Branch', sut.branch], ['Data del commit', sut.commitDate],
+      ['Sistema', sut.name], ['Versione', sut.version], ['Commit', sut.commit], ['Branch', sut.branch], ['Data del commit', sut.commitDate],
       ['Ambiente', sut.environment], ...Object.entries(sut.extra || {}),
     ].filter(x => x[1]);
     const runRows2 = [['Esecuzione', run.id], ['Inizio', dt(run.start)], ['Fine', dt(run.end)], ['Durata', dur(run.durationMs)], ['Macchina', run.machine], ['Utente', run.user],
       ['Framework', run.framework], ...Object.entries(run.properties || {})].filter(x => x[1]);
-    const dl = rows => `<dl class="dl">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${/Build|Commit|Esecuzione|Branch/.test(k) ? 'mono' : ''}">${esc(v)}</dd>`).join('')}</dl>`;
+    const dl = rows => `<dl class="dl">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${/Versione|Commit|Esecuzione|Branch/.test(k) ? 'mono' : ''}">${esc(v)}</dd>`).join('')}</dl>`;
     const envPanel = `<div class="grid grid-2"><div><h3 class="sub-h">${ic('server')}Sistema sotto test</h3>${dl(envRows)}</div><div><h3 class="sub-h">${ic('grid')}Esecuzione</h3>${dl(runRows2)}</div></div>`;
 
     const tabs = [
-      ['changes', 'Cambiamenti', 'layers', d.baselineRunId ? d.regressions + d.fixed + d.stillFailing + d.new + d.flaky + removed.length : null],
+      ['changes', 'Cambiamenti', 'layers', d.baselineRunId ? d.regressions + d.fixed + d.stillFailing + (d.unverified || 0) + d.new + d.flaky + removed.length : null],
       ['categories', 'Categorie di errore', 'bug', catList.length],
       ['suites', 'Suite', 'grid', Object.keys(suites).length],
       ['durations', 'Durate', 'hourglass', null],
@@ -860,11 +1006,16 @@
     return null;
   }
 
-  /** Allegati del test: quelli veri (Allure) e i corpi di richiesta/risposta registrati da QaReport. */
-  function attachmentsOf(t) {
+  /**
+   * Allegati del test: quelli veri (file, testo allegato) e, con <paramref>bodies</paramref>, i corpi
+   * di richiesta/risposta registrati da QaReport. La scheda Allegati non li elenca uno per uno: stanno
+   * tutti nell'evidenza (un solo file da scaricare).
+   */
+  function attachmentsOf(t, bodies = true) {
     const out = (t.attachments || []).map(a => ({ ...a, where: 'test' }));
     const walk = (steps, where) => (steps || []).forEach(s => {
       (s.attachments || []).forEach(a => out.push({ ...a, where: where.concat(s.text).join(' › ') }));
+      if (!bodies) { if (s.kind === 'step') walk(s.steps, where.concat(s.text)); return; }
       if (s.kind === 'request' && detail(s, 'corpo') != null) out.push({ name: 'Corpo della richiesta', content: detail(s, 'corpo'), where: where.concat(s.text.split(' · ')[0]).join(' › ') });
       if (s.kind === 'response' && detail(s, 'corpo') != null) out.push({ name: 'Corpo della risposta', content: detail(s, 'corpo'), where: where.concat(s.text.split(' · ')[0]).join(' › ') });
       if (s.kind === 'step') walk(s.steps, where.concat(s.text));
@@ -907,14 +1058,21 @@
       ${a.where && a.where !== 'test' ? `<span class="att-where break">${esc(a.where)}</span>` : ''}<span class="att-meta">${esc(a.type || '')}${a.sizeBytes ? ' · ' + esc(size(a.sizeBytes)) : ''}</span>${ic('chevDown', 'chev')}</summary>${body}</details>`;
   }
 
-  /** Albero dei passi: nodi con nome (step) e gruppi di azioni piatte, a qualunque livello. */
-  function renderSteps(t, steps, depth) {
+  /**
+   * Albero dei passi: nodi con nome (step) e gruppi di azioni piatte, a qualunque livello.
+   * <paramref>last</paramref>: questi passi chiudono il test (l'ultimo prende foto e video del test
+   * se nessun passo è fallito prima, es. un bloccato che si ferma lì).
+   */
+  function renderSteps(t, steps, depth, last = depth === 0) {
     const acts = actionsOf(steps, depth === 0 && t.status === 'failed');
     const flat = acts.filter(a => !a.node);
-    return acts.map(a => a.node ? stepNode(t, a.node, depth) : stepCard(t, flat, a, flat.indexOf(a), depth > 0)).join('');
+    return acts.map((a, i) => {
+      const end = last && i === acts.length - 1;
+      return a.node ? stepNode(t, a.node, depth, end) : stepCard(t, flat, a, flat.indexOf(a), depth > 0, end);
+    }).join('');
   }
 
-  function stepNode(t, s, depth) {
+  function stepNode(t, s, depth, end = false) {
     const kids = s.steps || [];
     const failed = s.status === 'failed';
     const nSub = allSteps(kids).length, nAtt = allSteps([s]).reduce((n, x) => n + (x.attachments || []).length, 0);
@@ -924,14 +1082,22 @@
     if (params.length) body += `<dl class="params">${params.map(d => `<dt>${esc(d.key)}</dt><dd class="break">${esc(d.value)}</dd>`).join('')}</dl>`;
     if (exp != null || got != null) body += `<div class="pair">${exp != null ? code(exp, { label: 'Atteso' }) : ''}${got != null ? code(got, { label: 'Ottenuto', tone: failed ? 'ko' : '' }) : ''}</div>`;
     if (failed && msg && !kids.some(k => k.status === 'failed' || k.ok === false)) body += code(msg, { label: 'Errore', tone: 'ko', plain: true });
-    if ((s.attachments || []).length) body += attachmentsHtml(s.attachments);
-    if (kids.length) body += `<div class="node-kids">${renderSteps(t, kids, depth + 1)}</div>`;
+    const own = [...(s.attachments || []), ...((failed && !kids.some(k => k.status === 'failed' || k.ok === false)) || (end && !kids.length) ? takeMedia() : [])];
+    if (own.length) body += attachmentsHtml(own);
+    if (kids.length) body += `<div class="node-kids">${renderSteps(t, kids, depth + 1, end)}</div>`;
     const leafy = !body;
     return `<details class="node ${s.status || 'passed'} ${leafy ? 'leafy' : ''}" ${failed ? 'open' : ''}><summary>
       ${statusIcon(s.status || 'passed')}<span class="node-title break">${esc(s.text)}</span>
       <span class="node-meta">${nSub ? `<span title="passi al suo interno">${ic('route')}${nSub}</span>` : ''}${nAtt ? `<span title="allegati">${ic('clip')}${nAtt}</span>` : ''}${params.length || exp != null ? `<span title="parametri">${ic('list')}${params.length + (exp != null ? 1 : 0) + (got != null ? 1 : 0)}</span>` : ''}</span>
       <span class="step-time">${esc(dur(s.durationMs))}</span>${leafy ? '' : ic('chevDown', 'chev')}</summary>${body}</details>`;
   }
+
+  /** Foto e video del test ancora da mostrare: li prende il primo passo fallito che si disegna. */
+  let pendingMedia = [];
+  const takeMedia = () => { const m = pendingMedia; pendingMedia = []; return m; };
+
+  /** Test mostrato nel dettaglio (per l'evidenza da scaricare). */
+  let shown = null;
 
   function testDetail(run, data, x) {
     const t = x.test, c = x.change || {};
@@ -942,78 +1108,137 @@
     const nActions = every.filter(s => (s.kind === 'request' || s.kind === 'action' || s.kind === 'step') && !isCheck(s)).length;
     const hist = idx.tests[t.key];
     const runIdx = runs.findIndex(r => r.id === run.id);
-    const atts = attachmentsOf(t);
     const cat = t.status === 'failed' ? failureCategory(x) : null;
+    shown = { test: t, run, change: x.change };   // per "Scarica l'evidenza"
+    // Foto e video del test (screenshot al fallimento, video della sessione): nel passo in cui si
+    // rompe (il primo fallito nell'ordine dei passi); tutti anche nella scheda Allegati.
+    pendingMedia = t.status === 'failed' || t.status === 'blocked' ? (t.attachments || []).filter(isMedia) : [];
+    const media = attachmentsOf(t, false).filter(isMedia);
 
     let callout = '';
-    const baseBuild = run.diff.baselineBuild;
-    if (c.change === 'regression') callout = co('c-reg', 'up', `<b>Regressione</b>: passava sulla build <span class="mono">${esc(baseBuild)}</span>, fallisce sulla <span class="mono">${esc(run.build)}</span>.`);
-    else if (c.change === 'fixed') callout = co('c-fix', 'check', `<b>Corretto</b>: falliva sulla build <span class="mono">${esc(baseBuild)}</span>, passa sulla <span class="mono">${esc(run.build)}</span>.`);
-    else if (c.change === 'still-failing') callout = co('c-still', 'repeat', `<b>Ancora fallito</b>: fallisce dalla build <span class="mono">${esc(c.failingSinceBuild)}</span>${c.failingSinceRun ? ` (esecuzione del ${esc(dtShort((runById(c.failingSinceRun) || {}).start))})` : ''}.`);
+    const baseVersion = run.diff.baselineVersion;
+    if (c.change === 'regression') callout = co('c-reg', 'up', `<b>Possibile regressione</b>: passava sulla versione <span class="mono">${esc(baseVersion)}</span>, fallisce sulla <span class="mono">${esc(run.version)}</span>.`);
+    else if (c.change === 'fixed') callout = co('c-fix', 'check', `<b>Corretto</b>: falliva sulla versione <span class="mono">${esc(baseVersion)}</span>, passa sulla <span class="mono">${esc(run.version)}</span>.`);
+    else if (c.change === 'still-failing') callout = co('c-still', 'repeat', `<b>Ancora fallito</b>: fallisce dalla versione <span class="mono">${esc(c.failingSinceVersion)}</span>${c.failingSinceRun ? ` (esecuzione del ${esc(dtShort((runById(c.failingSinceRun) || {}).start))})` : ''}.`);
+    else if (c.change === 'unverified') callout = co('c-unver', 'question', `<b>Non più verificato</b>: passava sulla versione <span class="mono">${esc(baseVersion)}</span>, sulla <span class="mono">${esc(run.version)}</span> è ${esc(statusLabel(t.status).toLowerCase())}: la funzionalità non è più verificata.`);
     else if (c.change === 'new') callout = co('c-new', 'plus', `<b>Test nuovo</b>: non c'era nell'esecuzione di confronto${t.status === 'failed' ? ' e fallisce già alla prima' : ''}.`);
-    if (c.flaky) callout += co('c-flaky', 'zig', `<b>Instabile</b>: sulla build <span class="mono">${esc(run.build)}</span> ha dato esiti diversi tra un'esecuzione e l'altra.`);
+    if (c.flaky) callout += co('c-flaky', 'zig', `<b>Instabile</b>: sulla versione <span class="mono">${esc(run.version)}</span> ha dato esiti diversi tra un'esecuzione e l'altra.`);
 
     const labels = [...(t.categories || []).map(v => ['tag', v]), ...Object.entries(t.properties || {})];
     const tabs = [
-      ['overview', 'Panoramica', 'list', null],
+      ['overview', 'Dettaglio', 'list', null],
       ['history', 'Storico', 'history', hist ? hist.st.replace(/-/g, '').length : 0],
-      ['attachments', 'Allegati', 'clip', atts.length],
-      ['info', 'Dettagli', 'info', null],
+      ['attachments', 'Allegati', 'clip', 1 + media.length],   // l'evidenza in testo, poi foto e video
+      ['info', 'Informazioni', 'info', null],
     ];
+    // Intestazione e schede in un blocco fisso (sticky) come l'albero a sinistra: restano in vista
+    // scorrendo i passi; gli avvisi (cambiamento, instabile) stanno nell'intestazione, a colpo d'occhio.
     return `
+      <div class="detail-head">
       <header class="card t-head ${t.status}">
         <div class="t-head-bar">
           <span class="t-fullname mono break" title="${esc(t.key)}">${esc(t.key)}</span>
           <button type="button" class="icon-btn small" data-copy-text="${esc(t.key)}" title="Copia il nome completo">${ic('copy')}</button>
+          <button type="button" class="icon-btn small" data-evidence title="Scarica l'evidenza del test (un solo file .txt con tutto quello che ha fatto)">${ic('download')}</button>
           <span class="t-nav" id="test-nav"></span>
         </div>
         <h2 class="t-title">${esc(t.title)}</h2>
         <div class="t-head-top"><span class="st ${t.status}">${statusIcon(t.status)}${statusLabel(t.status)}</span>${changeBadge(c)}
-          ${t.defect ? `<span class="badge defect">${ic('bug')}difetto noto ${esc(t.defect.id)}</span>` : ''}
+          ${t.defect ? defectTag(t.defect, 'defect', `${ic('bug')}difetto noto ${esc(t.defect.id)}`, t.defect.title || '', true) : ''}${blockedBadge(t, true)}
           ${cat ? `<span class="badge ${cat.cls}" title="Categoria di errore">${ic(cat.icon)}${esc(cat.label)}</span>` : ''}
           <span class="t-head-dur">${ic('clock')}${esc(dur(t.durationMs))}</span></div>
         <div class="t-path">${esc(suiteOf(t))}${ic('chevRight')}<span class="mono">${esc(t.method || '')}</span>${t.arguments ? `<span class="mono t-args">(${esc(t.arguments)})</span>` : ''}</div>
+        ${callout ? `<div class="t-head-notes">${callout}</div>` : ''}
       </header>
-      ${callout}
       <nav class="tabs" role="tablist">${tabs.map(([k, l, i, n], j) => `<button type="button" class="tab ${j === 0 ? 'active' : ''}" data-tab="${k}">${ic(i)}${l}${n != null ? `<span class="tab-badge">${n}</span>` : ''}</button>`).join('')}</nav>
+      </div>
 
       <section class="panel" data-panel="overview">
-        ${t.status === 'failed' ? whereFailed(t) : ''}
-        ${t.defect ? `<section class="card"><h2 class="card-h">${ic('bug')}Difetto noto ${esc(t.defect.id)}</h2>
+        ${t.status === 'failed' ? whereFailed(t) : notRun(t, run, data)}
+        ${t.defect ? `<section class="card"><h2 class="card-h">${ic('bug')}Difetto noto ${esc(t.defect.id)}${defectUrl(t.defect) ? `<a class="note issue-note" href="${esc(defectUrl(t.defect))}" target="_blank" rel="noopener">apri la issue ${ic('external')}</a>` : ''}</h2>
           <p style="margin:0 0 8px;font-weight:600">${esc(t.defect.title)}</p>${t.defect.fix ? `<p class="muted" style="margin:0 0 8px">${esc(t.defect.fix)}</p>` : ''}
           ${t.defect.files && t.defect.files.length ? `<div class="mono muted break" style="font-size:12.5px">${t.defect.files.map(esc).join('<br>')}</div>` : ''}</section>` : ''}
         ${(t.parameters || []).length ? `<section class="card"><h2 class="card-h">${ic('list')}Parametri<span class="note">${t.parameters.length}</span></h2>
           <dl class="params wide">${t.parameters.map(p => `<dt>${esc(p.key)}</dt><dd class="mono break">${esc(p.value)}</dd>`).join('')}</dl></section>` : ''}
         ${labels.length ? `<section class="card"><h2 class="card-h">${ic('grid')}Etichette<span class="note">${labels.length}</span></h2>
           <dl class="params wide">${labels.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="break">${/^https?:\/\//.test(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v)}</dd>`).join('')}</dl></section>` : ''}
-        ${(t.attachments || []).length ? `<section class="card"><h2 class="card-h">${ic('clip')}Allegati del test<span class="note">${t.attachments.length}</span></h2>${attachmentsHtml(t.attachments)}</section>` : ''}
-        <section class="card body-card">
+        ${every.length ? `<section class="card body-card">
           <div class="steps-bar"><h2 class="card-h" style="margin:0">${ic('route')}Corpo del test<span class="note">${nActions} passi · ${nChecks} verifiche</span></h2>
             <span><button type="button" class="link-btn" data-steps="open">${ic('expand')}Espandi</button><button type="button" class="link-btn" data-steps="close">${ic('collapse')}Comprimi</button></span></div>
-          <div class="tree-steps">${renderSteps(t, t.steps, 0) || '<div class="empty">Il test non ha registrato passi.</div>'}</div>
-        </section>
+          <div class="tree-steps">${renderSteps(t, t.steps, 0)}</div>
+        </section>` : ''}
       </section>
       <section class="panel" data-panel="history" hidden>${historyPanel(t, hist, runIdx)}</section>
-      <section class="panel" data-panel="attachments" hidden>${attachmentsPanel(atts)}</section>
+      <section class="panel" data-panel="attachments" hidden>${evidenceCard(t, run)}${media.length ? `<h3 class="sub-h">${ic('image')}Immagini e video<span class="note">${media.length}</span></h3>${mediaStrip(media, 'gallery')}` : ''}</section>
       <section class="panel" data-panel="info" hidden>${infoPanel(t, run)}</section>`;
   }
-  /** Scheda Allegati: prima la galleria di immagini e video, poi gli altri allegati. */
-  function attachmentsPanel(atts) {
-    if (!atts.length) return '<div class="empty">Nessun allegato.</div>';
-    const media = atts.filter(isMedia), other = atts.filter(a => !isMedia(a));
-    let html = '';
-    if (media.length) html += `<h3 class="sub-h">${ic('image')}Immagini e video<span class="note">${media.length}</span></h3>${mediaStrip(media, 'gallery')}`;
-    if (other.length) html += `${media.length ? `<h3 class="sub-h">${ic('clip')}Altri allegati<span class="note">${other.length}</span></h3>` : ''}<div class="atts">${other.map(a => attachmentBlock(a, false)).join('')}</div>`;
-    return html;
+  /**
+   * Scheda Allegati: un solo file, l'evidenza del test in testo (evidence.js) con tutto quello che
+   * il test ha fatto, in ordine (azioni, richieste e risposte con i corpi, verifiche, log, allegati
+   * di testo). Si legge qui e si scarica come .txt; il testo si prepara quando si apre la scheda.
+   */
+  function evidenceCard(t, run) {
+    const name = window.QAEvidence ? window.QAEvidence.fileName(t, run) : 'evidenza.txt';
+    return `<section class="card evidence"><div class="evidence-row">${ic('clip', 'evidence-ic')}
+      <div class="evidence-text"><b class="mono break">${esc(name)}</b><span class="muted">Un solo file di testo con tutto quello che il test ha fatto, in ordine: è la testimonianza dell'esecuzione.</span></div>
+      <span class="evidence-btns"><button type="button" class="icon-btn" data-copy-evidence title="Copia il testo">${ic('copy')}</button>
+      <button type="button" class="btn primary" data-evidence>${ic('download')}Scarica</button></span></div>
+      <pre class="evidence-view" data-evidence-view><span class="muted">Preparazione dell'evidenza…</span></pre></section>`;
+  }
+  /** Riempie il riquadro dell'evidenza la prima volta che si apre la scheda Allegati. */
+  async function fillEvidence(rootEl) {
+    const view = rootEl.querySelector('[data-evidence-view]');
+    if (!view || view.dataset.ready || !shown) return;
+    view.dataset.ready = '1';
+    const mine = shown;
+    try {
+      const text = await window.QAEvidence.build({ ...mine, index: idx });
+      if (shown === mine) view.textContent = text;
+    } catch (ex) { view.textContent = 'Evidenza non disponibile: ' + (ex && ex.message || ex); }
+  }
+
+  /** Test inconcludente o ignorato: il motivo (messaggio di NUnit), in evidenza come "Dove ha fallito". */
+  function notRun(t, run, data) {
+    const s = statusOf(t.status);
+    if (t.blockedBy) return blockedCard(t, run, data);
+    if (s !== 'inconclusive' && s !== 'ignored') return '';
+    const ran = allSteps(t.steps).length;
+    const why = ran && s === 'ignored'
+      ? `Il test ha eseguito ${ran} passi ed è stato poi segnato come ignorato (Assert.Ignore): non conta né tra i superati né tra i falliti.`
+      : s === 'inconclusive'
+      ? 'Il test non ha potuto concludere la verifica (Assert.Inconclusive o un\'assunzione non soddisfatta): non conta né tra i superati né tra i falliti.'
+      : 'Il test non è stato eseguito ([Ignore], Explicit o Assert.Ignore): non conta né tra i superati né tra i falliti.';
+    return `<section class="card why ${s}"><h3 class="where-h">${ic(STATUS[s].icon)}${s === 'inconclusive' ? 'Perché è inconcludente' : 'Perché è ignorato'}</h3>
+      <p class="muted" style="margin:0 0 10px">${why}</p>${t.message ? code(t.message, { label: 'Motivo', plain: true }) : '<div class="muted">Nessun motivo indicato.</div>'}</section>`;
+  }
+  /**
+   * Test bloccato (o non più bloccato): il difetto, i test di questa esecuzione che lo dimostrano
+   * e il motivo. Se il test ora passa, il difetto non lo blocca più: [BlockedBy] si può togliere.
+   */
+  function blockedCard(t, run, data) {
+    const b = t.blockedBy, blocked = statusOf(t.status) === 'blocked';
+    const proof = data.tests.filter(x => x.test.defect && x.test.defect.id === b.id);
+    const others = data.tests.filter(x => x !== data.byKey[t.key] && x.test.blockedBy && x.test.blockedBy.id === b.id && statusOf(x.test.status) === 'blocked');
+    const intro = blocked
+      ? `Il test non arriva a verificare la sua funzionalità per un difetto noto già dimostrato da un altro test: non fallisce una seconda volta e non conta né tra i superati né tra i falliti.`
+      : `Il test è segnato come bloccato da questo difetto ma è passato: il difetto non lo blocca più e il segno ([BlockedBy]) si può togliere.`;
+    return `<section class="card why ${blocked ? 'blocked' : 'unblocked'}"><h3 class="where-h">${ic('ban')}${blocked ? 'Perché è bloccato' : 'Non più bloccato'}</h3>
+      <p class="muted" style="margin:0 0 10px">${intro}</p>
+      <div class="kv"><span>Difetto</span><span>${defectUrl(b) ? `<a class="mono issue-inline" href="${esc(defectUrl(b))}" target="_blank" rel="noopener" title="Apri la issue">${esc(b.id)} ${ic('external')}</a>` : `<b class="mono">${esc(b.id)}</b>`} · ${esc(b.title || '')}</span></div>
+      ${b.fix ? `<div class="kv"><span>Correzione</span><span>${esc(b.fix)}</span></div>` : ''}
+      <div class="sub-h" style="margin-top:12px">${ic('bug')}Lo dimostra<span class="note">${proof.length}</span></div>
+      ${proof.length ? `<div class="trows">${proof.map(x => testRow(run, x.test, statusLabel(x.test.status).toLowerCase())).join('')}</div>`
+        : '<div class="muted small">Nessun test di questa esecuzione dimostra il difetto: controllare l\'Id o aggiungere [KnownDefect] al test che lo trova.</div>'}
+      ${others.length ? `<div class="sub-h" style="margin-top:12px">${ic('ban')}Blocca anche<span class="note">${others.length}</span></div>
+        <div class="trows">${others.slice(0, 10).map(x => testRow(run, x.test, '')).join('')}</div>` : ''}
+      ${blocked && t.message ? `<div style="margin-top:12px">${code(t.message, { label: 'Motivo', plain: true })}</div>` : ''}</section>`;
   }
   const co = (cls, icon, html) => `<div class="callout ${cls}">${ic(icon)}<div>${html}</div></div>`;
 
   function whereFailed(t) {
     const f = findFailure(t.steps);
     const exc = allSteps(t.steps).find(s => s.kind === 'log' && detail(s, 'stack'));
-    // Ultimo screenshot del test (di solito quello scattato al fallimento), accanto al punto di errore.
-    const shot = attachmentsOf(t).filter(isImage).pop();
-    let html = `<section class="card where ${shot ? 'has-shot' : ''}"><h3 class="where-h">${ic('pin')}Dove ha fallito</h3><div class="where-body"><div class="where-main">`;
+    let html = `<section class="card where"><h3 class="where-h">${ic('pin')}Dove ha fallito</h3><div class="where-body"><div class="where-main">`;
     if (f) {
       // Percorso degli step fino al punto di fallimento, poi l'azione piatta che lo precede.
       const trail = f.path.map(s => s.text);
@@ -1038,11 +1263,10 @@
         <details><summary>Stack trace</summary>${code(detail(exc, 'stack'), { plain: true })}</details></div>`;
     }
     html += '</div>';
-    if (shot) html += `<aside class="where-shot"><div class="label">Ultimo screenshot</div>${mediaThumb(shot)}</aside>`;
     return html + '</div></section>';
   }
 
-  function stepCard(t, acts, a, i, nested) {
+  function stepCard(t, acts, a, i, nested, end = false) {
     const [title, sub] = headTitle(a, nested);
     const start = a.head ? a.head.elapsedMs : (a.steps[0] ? a.steps[0].elapsedMs : 0);
     const nextHead = acts[i + 1] && acts[i + 1].head;
@@ -1078,7 +1302,7 @@
     }
     a.logs.filter(s => detail(s, 'stack')).forEach(s => { body += `<div class="io" style="grid-template-columns:minmax(0,1fr)"><div>${code(s.text + '\n' + detail(s, 'stack'), { label: 'Log del sistema', tone: 'ko', plain: true })}</div></div>`; });
     // Allegati dell'azione e dei suoi passi (es. lo screenshot dopo un tap, o al fallimento di una verifica).
-    const atts = [a.head, ...a.steps].filter(Boolean).flatMap(s => s.attachments || []);
+    const atts = [...[a.head, ...a.steps].filter(Boolean).flatMap(s => s.attachments || []), ...(cls === 'failed' || end ? takeMedia() : [])];
     if (atts.length) body += `<div class="step-atts">${attachmentsHtml(atts)}</div>`;
     return `<details class="step ${cls} ${a.head && a.head.kind === 'action' ? 'is-action' : ''} ${nested ? 'nested' : ''}" ${cls === 'failed' ? 'open' : ''}><summary>
       <span class="step-n">${a.head ? a.n : (nested ? '✓' : 0)}</span>
@@ -1092,20 +1316,21 @@
     const cells = runs.map((r, k) => {
       const s = hist.st[k] || '-';
       const cls = s === '-' ? 'x' : s;
-      const tip = `${dt(r.start)} · build ${r.build} · ${s === 'P' ? 'superato' : s === 'F' ? 'fallito' : s === '-' ? 'assente' : 'altro'}${hist.d[k] != null ? ' · ' + dur(hist.d[k]) : ''}`;
+      const tip = `${dt(r.start)} · versione ${r.version} · ${s === '-' ? 'assente' : statusLabel(statusOfLetter(s)).toLowerCase()}${hist.d[k] != null ? ' · ' + dur(hist.d[k]) : ''}`;
       return s === '-' ? `<span class="${cls}" title="${esc(tip)}"></span>`
-        : `<a class="${cls} ${k === runIdx ? 'current' : ''}" href="#/run/${encodeURIComponent(r.id)}/test/${encodeURIComponent(t.key)}" title="${esc(tip)}"></a>`;
+        : `<a class="${cls} ${k === runIdx ? 'current' : ''}" href="#/run/${encodeURIComponent(r.id)}/test/${encodeURIComponent(t.key)}${k === runIdx ? '' : '?tab=overview'}" title="${esc(tip)}"></a>`;
     }).join('');
-    // Per build: esiti delle esecuzioni, dalla più recente.
-    const groups = idx.builds.slice().reverse().map(b => {
+    // Per versione: esiti delle esecuzioni, dalla più recente.
+    const groups = idx.versions.slice().reverse().map(b => {
       const rows = b.runs.slice().reverse().map(id => { const k = runs.findIndex(r => r.id === id); return { r: runs[k], k, s: hist.st[k] }; }).filter(x => x.s && x.s !== '-');
       if (!rows.length) return '';
-      const p = rows.filter(x => x.s === 'P').length, f = rows.filter(x => x.s === 'F').length;
+      const n = l => rows.filter(x => x.s === l).length;
+      const p = n('P'), f = n('F'), bl = n('B'), i = n('I'), g = n('G');
       const flaky = p && f;
-      return `<div class="hist-build"><div class="hist-build-h">${ic('layers')}<b>${esc(b.build)}</b><span class="muted">${esc(b.version || '')}</span>
-          <span style="margin-left:auto">${p ? `<span class="count ok">${p}</span> ` : ''}${f ? `<span class="count ko">${f}</span>` : ''}${flaky ? ' <span class="badge c-flaky">instabile</span>' : ''}</span></div>
-        ${rows.map(x => `<a class="hist-row ${x.k === runIdx ? 'current' : ''}" href="#/run/${encodeURIComponent(x.r.id)}/test/${encodeURIComponent(t.key)}">
-          ${statusIcon(x.s === 'P' ? 'passed' : x.s === 'F' ? 'failed' : 'skipped')}<span>${esc(dt(x.r.start))}</span><span class="muted">${esc(dur(hist.d[x.k]))}</span></a>`).join('')}</div>`;
+      return `<div class="hist-version"><div class="hist-version-h">${ic('layers')}<b>${esc(b.version)}</b>
+          <span style="margin-left:auto">${p ? `<span class="count ok" title="superati">${p}</span> ` : ''}${f ? `<span class="count ko" title="falliti">${f}</span> ` : ''}${bl ? `<span class="count blk" title="bloccati">${bl}</span> ` : ''}${i ? `<span class="count inc" title="inconcludenti">${i}</span> ` : ''}${g ? `<span class="count ign" title="ignorati">${g}</span>` : ''}${flaky ? ' <span class="badge c-flaky">instabile</span>' : ''}</span></div>
+        ${rows.map(x => `<a class="hist-row ${x.k === runIdx ? 'current' : ''}" href="#/run/${encodeURIComponent(x.r.id)}/test/${encodeURIComponent(t.key)}${x.k === runIdx ? '' : '?tab=overview'}">
+          ${statusIcon(statusOfLetter(x.s))}<span>${esc(dt(x.r.start))}</span><span class="muted">${esc(dur(hist.d[x.k]))}</span></a>`).join('')}</div>`;
     }).join('');
     return `<section class="card"><h3 class="card-h">${ic('history')}Esito nelle esecuzioni<span class="note">dalla più vecchia</span></h3><div class="strip">${cells}</div></section>
       <div class="hist">${groups}</div>`;
@@ -1114,8 +1339,8 @@
   function infoPanel(t, run) {
     const rows = [['Chiave', t.key], ['Classe', t.className], ['Metodo', t.method], ['Argomenti', t.arguments], ['Inizio', dt(t.start)], ['Fine', dt(t.end)], ['Durata', dur(t.durationMs)]].filter(x => x[1]);
     const sut = run.sut || {};
-    const env = [['Sistema', sut.name], ['Build', sut.build], ['Versione', sut.version], ['Commit', sut.commit], ['Ambiente', sut.environment], ['Macchina', run.machine], ['Framework', run.framework]].filter(x => x[1]);
-    const dl = rs => `<dl class="dl">${rs.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${/Chiave|Classe|Metodo|Build|Commit/.test(k) ? 'mono' : ''}">${esc(v)}</dd>`).join('')}</dl>`;
+    const env = [['Sistema', sut.name], ['Versione', sut.version], ['Commit', sut.commit], ['Ambiente', sut.environment], ['Macchina', run.machine], ['Framework', run.framework]].filter(x => x[1]);
+    const dl = rs => `<dl class="dl">${rs.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="${/Chiave|Classe|Metodo|Versione|Commit/.test(k) ? 'mono' : ''}">${esc(v)}</dd>`).join('')}</dl>`;
     return `<div class="grid grid-2"><section class="card"><h3 class="card-h">${ic('info')}Test</h3>${dl(rows)}</section>
       <section class="card"><h3 class="card-h">${ic('server')}Ambiente</h3>${dl(env)}</section></div>
       ${t.message ? `<section class="card"><h3 class="card-h">${ic('ko')}Messaggio</h3>${code(t.message, { plain: true, tone: 'ko' })}</section>` : ''}
@@ -1130,6 +1355,7 @@
       if (!tabs.some(t => t.dataset.tab === k)) k = tabs[0].dataset.tab;
       tabs.forEach(t => { t.classList.toggle('active', t.dataset.tab === k); t.setAttribute('aria-selected', String(t.dataset.tab === k)); });
       root.querySelectorAll('.panel').forEach(p => { p.hidden = p.dataset.panel !== k; });
+      if (k === 'attachments') fillEvidence(root);
       if (remember) store.set(key, k);
     };
     tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.tab, true)));
@@ -1153,7 +1379,7 @@
     const link = r => `#/run/${encodeURIComponent(r.id)}${sel ? '/test/' + encodeURIComponent(sel.test.key) : ''}`;
     const prev = runs[i - 1], next = runs[i + 1];
     const btn = (r, icon, label) => r
-      ? `<a class="step-btn" href="${link(r)}" title="${esc(label)}: ${esc(dt(r.start))} · build ${esc(r.build)}">${icon === 'chevLeft' ? ic(icon) : ''}<span>${esc(label)}</span>${icon === 'chevRight' ? ic(icon) : ''}</a>`
+      ? `<a class="step-btn" href="${link(r)}" title="${esc(label)}: ${esc(dt(r.start))} · versione ${esc(r.version)}">${icon === 'chevLeft' ? ic(icon) : ''}<span>${esc(label)}</span>${icon === 'chevRight' ? ic(icon) : ''}</a>`
       : `<span class="step-btn disabled">${icon === 'chevLeft' ? ic(icon) : ''}<span>${esc(label)}</span>${icon === 'chevRight' ? ic(icon) : ''}</span>`;
     return `<div class="stepper">${btn(prev, 'chevLeft', 'Precedente')}<span class="stepper-pos">${i + 1} di ${runs.length}</span>${btn(next, 'chevRight', 'Successiva')}</div>`;
   }
@@ -1168,7 +1394,7 @@
     const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
     // ?period=sprint|month|year|all nell'indirizzo: link condivisibile con il periodo scelto.
     if (params.has('period')) store.set('qa:period', params.get('period'));
-    if (parts[0] === 'builds') return renderBuilds();
+    if (parts[0] === 'versions' || parts[0] === 'builds') return renderVersions();   // "builds": link vecchi
     if (parts[0] === 'run') return renderRun(parts[1] || latest().id, parts[2] === 'test' ? parts.slice(3).join('/') : null, params);
     renderHome();
   }
@@ -1194,6 +1420,14 @@
       route();
       return;
     }
+    const copyEv = e.target.closest('[data-copy-evidence]');
+    if (copyEv) {
+      const view = document.querySelector('[data-evidence-view]');
+      try { await navigator.clipboard.writeText(view.textContent); toast('Evidenza copiata'); } catch { toast('Copia non riuscita'); }
+      return;
+    }
+    const evid = e.target.closest('[data-evidence]');
+    if (evid) { downloadEvidence(evid); return; }
     const del = e.target.closest('[data-delete-run]');
     if (del) { confirmDelete(runById(del.dataset.deleteRun)); return; }
     const thumb = e.target.closest('[data-lb]');
@@ -1201,6 +1435,16 @@
     const steps = e.target.closest('[data-steps]');
     if (steps) document.querySelectorAll('.tree-steps details').forEach(d => { d.open = steps.dataset.steps === 'open'; });
   });
+  /** Scarica l'evidenza del test mostrato (evidence.js); il pulsante resta spento finché lavora. */
+  async function downloadEvidence(btn) {
+    if (!shown || !window.QAEvidence || btn.disabled) { if (!window.QAEvidence) toast('Evidenza non disponibile'); return; }
+    btn.disabled = true;
+    toast('Preparazione dell\'evidenza…');
+    try { await window.QAEvidence.download({ ...shown, index: idx }); toast('Evidenza scaricata'); }
+    catch (ex) { toast('Evidenza non riuscita: ' + (ex && ex.message || ex)); }
+    finally { btn.disabled = false; }
+  }
+
   // ------------------------------------------------------------------ eliminazione di un'esecuzione
 
   /**
@@ -1214,15 +1458,15 @@
   function confirmDelete(run) {
     if (!run) return;
     serverInfo.then(info => {
-      const only = runs.filter(r => r.build === run.build).length === 1;
+      const only = runs.filter(r => r.version === run.version).length === 1;
       const back = document.activeElement;
       const el = document.createElement('div');
       el.className = 'modal-back';
       el.innerHTML = `<div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="del-h" aria-describedby="del-d">
         <h2 class="modal-h" id="del-h">${ic('trash')}Eliminare l'esecuzione?</h2>
         <div id="del-d">
-          <p>L'esecuzione del <b>${esc(dt(run.start))}</b> sulla build <b class="mono">${esc(run.build)}</b> (${run.counts.passed}/${run.counts.total} superati) viene tolta dallo storico insieme ai suoi allegati, e il report viene rigenerato.</p>
-          ${only ? `<p>È l'unica esecuzione della build <b class="mono">${esc(run.build)}</b>: la build sparisce e la build successiva sarà confrontata con quella precedente.</p>` : ''}
+          <p>L'esecuzione del <b>${esc(dt(run.start))}</b> sulla versione <b class="mono">${esc(run.version)}</b> (${run.counts.passed}/${run.counts.total} superati) viene tolta dallo storico insieme ai suoi allegati, e il report viene rigenerato.</p>
+          ${only ? `<p>È l'unica esecuzione della versione <b class="mono">${esc(run.version)}</b>: la versione sparisce e la versione successiva sarà confrontata con quella precedente.</p>` : ''}
           <p class="modal-warn">${ic('stop')}L'operazione non si può annullare.</p>
         </div>
         <label class="modal-field">Per confermare scrivi <b>ELIMINA</b><input id="del-confirm" autocomplete="off" spellcheck="false"></label>
