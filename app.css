@@ -805,3 +805,15 @@ a.icon-btn:hover { text-decoration: none; }
 /* Dati dal DB nel passo: query e risultato apribili sotto la riga. */
 .data-details { margin: 4px 0 6px 22px; }
 .data-details > summary { cursor: pointer; font-size: 12.5px; }
+
+/* Scelta del piano di rilascio e della categoria */
+.scope-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 1400px; margin: 0 auto; padding: 10px 20px 0; font-size: 13px; color: var(--muted); }
+.scope-nav[hidden] { display: none; }
+.scope-nav [aria-current] { color: var(--text); font-weight: 600; }
+.scope-sep { color: var(--muted); }
+.scope-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 18px; }
+.scope-card { display: flex; flex-direction: column; gap: 6px; margin-top: 0; color: var(--text); transition: border-color .15s; }
+a.scope-card:hover { border-color: var(--accent); }
+.scope-card.is-empty { opacity: .6; }
+.scope-title { font-size: 17px; font-weight: 700; }
+.scope-meta { color: var(--muted); font-size: 13px; }

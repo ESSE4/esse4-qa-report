@@ -29,6 +29,7 @@
       <button type="button" class="icon-btn" id="theme-btn" title="Tema chiaro/scuro" aria-label="Tema chiaro/scuro"></button>
     </div>
   </header>
+  <nav class="scope-nav" id="scope-nav" aria-label="Piano e categoria" hidden></nav>
 
   <main id="app" class="app" tabindex="-1">
     <div class="loading">Caricamento…</div>
@@ -37,8 +38,19 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <noscript><p class="noscript">Il report richiede JavaScript.</p></noscript>
-  <script src="data/index.js"></script>
+  <script>
+    // Piano e categoria scelti: decidono quali dati leggere (document.write li carica prima di app.js,
+    // anche con il report aperto da file).
+    (function () {
+      var q = new URLSearchParams(location.search), plan = q.get('plan'), cat = q.get('cat'), ok = /^[\w-]+$/;
+      var scope = plan && cat && ok.test(plan) && ok.test(cat) ? { plan: plan, cat: cat } : null;
+      window.QA = { scope: scope, dataBase: scope ? 'data/scopes/' + plan + '/' + cat + '/' : 'data/' };
+      document.write('<script src="data/index.js"><\/script>');
+      if (scope) document.write('<script src="' + QA.dataBase + 'index.js"><\/script>');
+    })();
+  </script>
   <script src="evidence.js"></script>
+  <script src="plans.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
