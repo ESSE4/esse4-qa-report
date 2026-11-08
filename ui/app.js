@@ -1,7 +1,8 @@
 // QaReport — pagina del report (JavaScript semplice, nessuna libreria).
 //
-// Dati: data/index.js imposta QA.index (esecuzioni, versioni, storico per test); il dettaglio di
-// un'esecuzione arriva da data/runs/<id>.js, caricato su richiesta, che chiama QA.load(id, dati).
+// Dati: data/scopes/<piano>/<categoria>/index.js imposta QA.index (esecuzioni, versioni, storico per
+// test); il dettaglio di un'esecuzione arriva da runs/<id>.js accanto, caricato su richiesta, che
+// chiama QA.load(id, dati). Finché piano e categoria non sono scelti decide plans.js.
 // Indirizzi con "#" (funzionano anche aperti da file o da una cartella di rete):
 //   #/                         panoramica (ultima esecuzione, confronto con la versione precedente)
 //   #/versions                 versioni del sistema: possibili regressioni e fix per versione
@@ -11,7 +12,7 @@
   'use strict';
 
   const QA = (window.QA = window.QA || {});
-  const idx = QA.index;
+  const idx = QA.index || QA.plans;
   const app = document.getElementById('app');
 
   // ================================================================== utilità
@@ -190,8 +191,9 @@
 
   // ================================================================== dati delle esecuzioni
 
-  const runs = idx ? idx.runs : [];
-  const runById = id => runs.find(r => r.id === id);
+  const runs = (idx && idx.runs) || [];
+  // Un'esecuzione di confronto può stare in un altro piano (externalRuns): se ne mostrano data e versione.
+  const runById = id => runs.find(r => r.id === id) || ((idx && idx.externalRuns) || []).find(r => r.id === id);
   const latest = () => runs[runs.length - 1];
   const cache = {};
   const waiting = {};
@@ -209,7 +211,7 @@
       (waiting[id] = waiting[id] || []).push(resolve);
       if (waiting[id].length > 1) return;
       const s = document.createElement('script');
-      s.src = `data/runs/${safe(id)}.js`;
+      s.src = `${QA.dataBase}runs/${safe(id)}.js`;
       s.onerror = () => reject(new Error('Dati dell\'esecuzione non trovati: ' + id));
       document.head.appendChild(s);
     });
@@ -550,6 +552,7 @@
 
   async function renderRun(runId, testKey, params) {
     const run = runById(runId);
+    if (run && run.scopeUrl) { location.href = run.scopeUrl + location.hash; return; }
     if (!run) { app.innerHTML = `<div class="empty">Esecuzione non trovata: ${esc(runId)}. <a href="#/">Torna alla panoramica</a></div>`; return; }
     setNav('run', run.id);
     // Già nella pagina dei test (altro test, o lo stesso test in un'altra esecuzione): si tengono la
@@ -1398,6 +1401,7 @@
   // ================================================================== router e azioni globali
 
   function route() {
+    if (QA.pickerMode) return QA.renderPicker();
     if (!idx || !runs.length) { app.innerHTML = '<div class="empty">Nessuna esecuzione nello storico: lancia i test e rigenera il report.</div>'; return; }
     const raw = location.hash.replace(/^#/, '') || '/';
     const [path, query] = raw.split('?');
