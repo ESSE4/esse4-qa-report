@@ -29,7 +29,13 @@
   const dur = ms => ms == null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1).replace('.', ',')} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`;
   const pct = (a, b) => b ? (100 * a / b).toFixed(1).replace('.', ',') + '%' : '—';
   const safe = id => String(id).replace(/[^A-Za-z0-9_-]/g, '_');
-  const suiteOf = t => (t.className || '').split('.').pop() || '(senza classe)';
+  // Suite di un test: la classe; con un namespace "...Feature.<Area>.<Classe>" anche l'area, così le
+  // suite della stessa area stanno vicine e classi omonime di aree diverse non si fondono.
+  const suiteOf = t => {
+    const parts = (t.className || '').split('.');
+    const feature = parts.lastIndexOf('Feature');
+    return (feature >= 0 && feature < parts.length - 1 ? parts.slice(feature + 1).join(' › ') : parts.pop()) || '(senza classe)';
+  };
 
   // Icone SVG disegnate qui (tratto, 24×24).
   const P = {
@@ -553,7 +559,7 @@
     if (!cache[run.id]) app.innerHTML = '<div class="loading">Caricamento dell\'esecuzione…</div>';
     let data;
     try { data = await loadRun(run.id); } catch (e) { app.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-    const sel = testKey ? data.byKey[testKey] : null;
+    const sel = testKey ? data.byKey[testKey] || data.byKey[(idx.renames || {})[testKey]] || null : null;
 
     const key = 'qa:tree:' + run.id;
     const state = Object.assign({ f: 'all', q: '', sort: 'status', size: 50, page: 1, collapsed: [] }, store.get(key, {}));
