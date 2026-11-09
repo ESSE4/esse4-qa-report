@@ -34,6 +34,7 @@
   --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --topbar-h: 56px;
+  --picker-w: 320px; /* piano ed esecuzione hanno sempre la stessa larghezza */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -95,27 +96,26 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
 
 .topbar { position: sticky; top: 0; z-index: 50; height: var(--topbar-h); display: flex; align-items: center; gap: 20px; padding: 0 20px;
   background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: saturate(1.4) blur(8px); border-bottom: 1px solid var(--border); }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--text); min-width: 0; flex: 1 1 auto; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); min-width: 212px; flex: 1 1000 auto; } /* quando manca spazio si accorcia per primo il titolo */
 .brand:hover { text-decoration: none; }
 .brand-logo { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; display: block; }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
-.brand-title { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-title { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.topnav { display: flex; gap: 2px; }
-.suitenav { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 10px; }
+.suitenav, .period { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 10px; flex: 0 0 auto; }
 .suitenav[hidden] { display: none; }
-.suitenav a, .suitenav span { padding: 4px 10px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 13px; }
-.suitenav a:hover { color: var(--text); background: var(--surface-3); text-decoration: none; }
-.suitenav .active { color: var(--accent-text); background: var(--accent-soft); }
-.topnav a { padding: 6px 12px; border-radius: 8px; color: var(--muted); font-weight: 600; }
-.topnav a:hover { color: var(--text); background: var(--surface-3); text-decoration: none; }
-.topnav a.active { color: var(--accent-text); background: var(--accent-soft); }
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
-.run-picker { min-width: 0; display: flex; }
-.run-picker select { width: auto; min-width: 0; max-width: 420px; height: 34px; padding: 0 34px 0 12px; border: 1px solid var(--border); border-radius: 8px;
+.suitenav a, .suitenav span, .period-btn { flex: 0 0 auto; padding: 4px 10px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
+.suitenav a:hover, .period-btn:hover { color: var(--text); background: var(--surface-3); text-decoration: none; }
+.suitenav .active, .period-btn.active { color: var(--accent-text); background: var(--accent-soft); }
+.suitenav .disabled { opacity: .5; cursor: not-allowed; }
+.topbar-right { display: contents; }
+.run-picker { position: relative; min-width: 0; display: flex; flex: 0 1 var(--picker-w); }
+.run-picker select { display: none; }
+.run-picker[hidden] { display: none; }
+.picker-btn { width: 100%; min-width: 0; height: 34px; color: var(--text); font: inherit; text-align: left; white-space: nowrap; overflow: hidden; padding: 0 34px 0 12px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface) no-repeat right 12px center / 12px 12px; appearance: none; -webkit-appearance: none; cursor: pointer; text-overflow: ellipsis;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); }
-.run-picker select:hover { border-color: var(--border-strong); }
+.picker-btn:hover { border-color: var(--border-strong); }
 .icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border);
   border-radius: 8px; background: var(--surface); color: var(--muted); flex: 0 0 auto; }
 .icon-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
@@ -687,7 +687,6 @@ a.icon-btn:hover { text-decoration: none; }
   .col-md { display: none; }
 }
 @media (max-width: 767.98px) {
-  .topbar { gap: 10px; padding: 0 12px; }
   .brand-sub { display: none; }
   .app { padding: 16px 12px 40px; }
   .hero, .run-head { grid-template-columns: minmax(0, 1fr); justify-items: center; }
@@ -706,7 +705,6 @@ a.icon-btn:hover { text-decoration: none; }
   .hbar-track { grid-column: 1 / -1; grid-row: 2; }
   .col-sm { display: none; }
   .table th { white-space: normal; }
-  .run-picker select { max-width: 150px; }
 }
 @media (max-width: 575.98px) {
   .viewer-stage { padding: 0 8px 72px; }
@@ -716,20 +714,18 @@ a.icon-btn:hover { text-decoration: none; }
   .viewer-bar { padding: 8px 10px; }
   .thumb-btn { height: 160px; }
   .thumbs.gallery .thumb-btn { height: 200px; }
-  .topnav a { padding: 6px 8px; }
   .brand-text { display: none; }
   .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .step-time { display: none; }
   .tab { padding: 8px 9px; }
   .col-xs { display: none; }
-  .run-picker select { max-width: 120px; }
   .card { padding: 14px; }
   .table th { white-space: normal; font-size: 10.5px; padding: 6px; }
   .table td { padding: 8px 6px; }
   .count { min-width: 1.8em; padding: 0 5px; }
 }
 @media (max-width: 479.98px) {
-  .run-picker { display: none; }
+  .run-picker:not(.plan-picker) { display: none; }
 }
 @media (max-width: 380px) {
   .topnav a[data-nav="versions"] { display: none; }
@@ -738,10 +734,8 @@ a.icon-btn:hover { text-decoration: none; }
 /* ------------------------------------------------------------------ periodo, azioni, conferma */
 
 .page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.period { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.period-btn { border: 0; background: transparent; color: var(--text-2); font-weight: 600; font-size: 13px; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
-.period-btn:hover { color: var(--text); background: var(--surface-2); }
-.period-btn.active { background: var(--accent); color: #fff; }
+.period { display: inline-flex; flex-wrap: wrap; }
+.period-btn { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 14px; border: 1px solid var(--border);
   border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; font-size: 13.5px; cursor: pointer; }
@@ -768,8 +762,6 @@ a.icon-btn:hover { text-decoration: none; }
 .modal-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 
 @media (max-width: 575.98px) {
-  .period { width: 100%; }
-  .period-btn { flex: 1 1 auto; padding: 6px 8px; font-size: 12.5px; }
   .modal-actions .btn { flex: 1 1 auto; }
 }
 
@@ -806,14 +798,62 @@ a.icon-btn:hover { text-decoration: none; }
 .data-details { margin: 4px 0 6px 22px; }
 .data-details > summary { cursor: pointer; font-size: 12.5px; }
 
-/* Scelta del piano di rilascio e della categoria */
-.scope-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 1400px; margin: 0 auto; padding: 10px 20px 0; font-size: 13px; color: var(--muted); }
-.scope-nav[hidden] { display: none; }
-.scope-nav [aria-current] { color: var(--text); font-weight: 600; }
-.scope-sep { color: var(--muted); }
-.scope-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 18px; }
-.scope-card { display: flex; flex-direction: column; gap: 6px; margin-top: 0; color: var(--text); transition: border-color .15s; }
-a.scope-card:hover { border-color: var(--accent); }
-.scope-card.is-empty { opacity: .6; }
-.scope-title { font-size: 17px; font-weight: 700; }
-.scope-meta { color: var(--muted); font-size: 13px; }
+/* Barra in alto, nell'ordine di lettura: piano, categoria, asset, sezione, esecuzione. Una riga finché
+   ci sta, poi due (con --topbar-h aggiornata, così gli elementi fissi sotto la barra restano al posto giusto). */
+@media (max-width: 1599.98px) {
+  .topbar { gap: 10px; padding: 0 12px; }
+  .brand { gap: 8px; }
+  :root { --picker-w: 190px; }
+}
+@media (max-width: 1365.98px) {
+  :root { --topbar-h: 84px; }
+  .topbar { flex-wrap: wrap; align-content: center; row-gap: 3px; }
+  .topbar::after { content: ""; flex: 0 0 100%; height: 0; order: 5; }
+  .brand { order: 1; flex: 1 1 0; min-width: 150px; }
+  .plan-picker { order: 2; }
+  #catnav { order: 3; }
+  #theme-btn { order: 4; margin-left: auto; }
+  #suitenav { order: 6; margin-left: auto; }
+  #topnav { order: 7; }
+  .run-picker:not(.plan-picker) { order: 8; }
+  .suitenav { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .suitenav::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 767.98px) {
+  .brand { flex: 0 0 auto; min-width: 30px; }
+  .brand-text { display: none; }
+  :root { --picker-w: 120px; }
+  .run-picker { flex: 0 0 var(--picker-w); }
+  #catnav { flex: 1 1 0; }
+  #suitenav { flex: 1 1 0; margin-left: 0; }
+  #topnav { flex: 0 0 auto; }
+}
+@media (max-width: 575.98px) {
+  .suitenav a, .suitenav span, .period-btn { padding: 4px 6px; font-size: 12px; }
+  .picker-btn { padding: 0 26px 0 8px; background-position: right 8px center; }
+}
+@media (max-width: 479.98px) {
+  .brand { display: none; }
+}
+
+/* Elenco delle select di piano ed esecuzione: largo quanto il testo, mai tagliato */
+.picker-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; width: max-content; min-width: 100%; max-width: min(560px, calc(100vw - 16px)); padding: 4px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow); }
+.picker-menu[hidden] { display: none; }
+.picker-search { display: block; width: 100%; height: 30px; margin-bottom: 4px; padding: 0 8px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 13px; }
+.picker-search:focus { outline: 0; border-color: var(--accent); }
+.picker-list { position: relative; overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: stable; }
+.picker-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+.picker-empty[hidden], .picker-opt[hidden] { display: none; }
+.picker-opt { display: block; width: 100%; padding: 6px 10px; color: var(--text-2); background: none; border: 0; border-radius: 6px; font: inherit; text-align: left; white-space: normal; cursor: pointer; }
+.picker-opt:hover, .picker-opt:focus-visible { color: var(--text); background: var(--surface-3); outline: 0; }
+.picker-opt.is-selected { color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+.picker-opt:disabled { color: var(--muted); opacity: .6; cursor: not-allowed; background: none; }
+
+/* Loader del cambio di pagina: visibile dal primo disegno, lo toglie plans.js */
+html { scrollbar-gutter: stable; }
+html:has(.page-loader:not(.is-done)) { overflow: hidden; } /* sotto il loader la pagina non scorre */
+.page-loader { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--bg); color: var(--text-2); font-size: 16px; font-weight: 600; }
+.page-loader.is-done { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
+.page-loader-spin { width: 56px; height: 56px; border: 5px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: page-loader-spin .8s linear infinite; }
+@keyframes page-loader-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .page-loader-spin { animation: none; } }

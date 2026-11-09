@@ -13,13 +13,16 @@
   </script>
 </head>
 <body>
+  <div class="page-loader" id="page-loader" role="status" aria-live="polite"><span class="page-loader-spin" aria-hidden="true"></span><span>Caricamento…</span></div>
   <header class="topbar">
     <a class="brand" href="#/">
       <img class="brand-logo" src="logo.png" width="30" height="30" alt="" />
       <span class="brand-text"><span class="brand-title" id="brand-title">Report dei test</span><span class="brand-sub" id="brand-sub"></span></span>
     </a>
-    <nav class="suitenav" id="suitenav" aria-label="Report" hidden></nav>
-    <nav class="topnav" id="topnav" aria-label="Sezioni">
+    <label class="run-picker plan-picker" hidden><span class="sr-only">Piano di rilascio</span><select id="plan-picker" aria-label="Piano di rilascio"></select></label>
+    <nav class="suitenav" id="catnav" aria-label="Categoria" hidden></nav>
+    <nav class="suitenav" id="suitenav" aria-label="Asset" hidden></nav>
+    <nav class="suitenav topnav" id="topnav" aria-label="Sezioni">
       <a href="#/" data-nav="home">Panoramica</a>
       <a href="#/versions" data-nav="versions">Versioni</a>
       <a href="#/run" data-nav="run">Test</a>
@@ -29,7 +32,6 @@
       <button type="button" class="icon-btn" id="theme-btn" title="Tema chiaro/scuro" aria-label="Tema chiaro/scuro"></button>
     </div>
   </header>
-  <nav class="scope-nav" id="scope-nav" aria-label="Piano e categoria" hidden></nav>
 
   <main id="app" class="app" tabindex="-1">
     <div class="loading">Caricamento…</div>

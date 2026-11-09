@@ -26,6 +26,7 @@
   const dt = s => { if (!s) return '—'; const d = new Date(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
   const dateShort = s => { if (!s) return '—'; const d = new Date(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; };
   const dtShort = s => { if (!s) return '—'; const d = new Date(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const dtYear = s => { if (!s) return '—'; const d = new Date(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   const time = s => { if (!s) return '—'; const d = new Date(s); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`; };
   const dur = ms => ms == null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1).replace('.', ',')} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`;
   const pct = (a, b) => b ? (100 * a / b).toFixed(1).replace('.', ',') + '%' : '—';
@@ -220,11 +221,13 @@
   // ================================================================== intestazione
 
   function initChrome() {
-    document.getElementById('brand-title').textContent = idx.title || 'Report dei test';
-    document.title = idx.title || 'Report dei test';
-    document.getElementById('brand-sub').textContent =
-      `${runs.length} esecuzion${runs.length === 1 ? 'e' : 'i'}${idx.masked ? ' · segreti mascherati' : ''}`;
-    document.getElementById('brand-sub').title = 'Report generato il ' + dt(idx.generated);
+    // Con un piano aperto il titolo dice cosa si sta leggendo (plans.js); altrimenti quello del report.
+    const heading = QA.heading || { title: idx.title || 'Report dei test', detail: '' };
+    const fullTitle = heading.detail ? `${heading.title} · ${heading.detail}` : heading.title;
+    document.getElementById('brand-title').textContent = heading.title;
+    document.getElementById('brand-sub').textContent = heading.detail;
+    document.querySelector('.brand').title = `${fullTitle}\nReport generato il ${dt(idx.generated)}`;
+    document.title = fullTitle;
     // Report fratelli nello stesso sito (es. API e frontend), ciascuno con il proprio storico.
     const suites = document.getElementById('suitenav');
     if ((idx.nav || []).length > 1) {
@@ -232,10 +235,11 @@
         ? `<span class="active" aria-current="page">${esc(n.label)}</span>`
         : `<a href="${esc(n.url)}">${esc(n.label)}</a>`).join('');
       suites.hidden = false;
+      QA.revealActive(suites);
     }
     const picker = document.getElementById('run-picker');
     picker.innerHTML = runs.slice().reverse().map(r =>
-      `<option value="${esc(r.id)}">${esc(dtShort(r.start))} · ${esc(r.version)} · ${r.counts.passed}/${r.counts.total}</option>`).join('');
+      `<option value="${esc(r.id)}" data-search="${esc(dtYear(r.start))} ${esc(r.version)}">${esc(dtYear(r.start))} · ${esc(r.version)} · ${r.counts.passed}/${r.counts.total}</option>`).join('');
     picker.addEventListener('change', () => { location.hash = `#/run/${encodeURIComponent(picker.value)}`; });
     const themeBtn = document.getElementById('theme-btn');
     const paintTheme = () => {
@@ -258,6 +262,7 @@
     const runLink = document.querySelector('#topnav a[data-nav="run"]');
     runLink.href = `#/run/${encodeURIComponent(runId || latest().id)}`;
     document.getElementById('run-picker').value = runId || latest().id;
+    if (QA.syncPickers) QA.syncPickers();
   }
 
   // ================================================================== componenti
@@ -488,7 +493,7 @@
       </div>`;
     paintTrends();
     if (run.diff.regressions || run.diff.fixed) {
-      loadRun(run.id).then(data => {
+      return loadRun(run.id).then(data => {
         const el = document.getElementById('home-changes');
         if (!el) return;
         el.innerHTML = changeLists(data, run, ['regression', 'fixed'], 8);
@@ -554,6 +559,7 @@
     const run = runById(runId);
     if (run && run.scopeUrl) { location.href = run.scopeUrl + location.hash; return; }
     if (!run) { app.innerHTML = `<div class="empty">Esecuzione non trovata: ${esc(runId)}. <a href="#/">Torna alla panoramica</a></div>`; return; }
+    if (!cache[run.id]) QA.loader.showIfHidden();   // dati da scaricare: si copre l'attesa
     setNav('run', run.id);
     // Già nella pagina dei test (altro test, o lo stesso test in un'altra esecuzione): si tengono la
     // posizione della lista dei test e quella della pagina (vedi keepScroll in fondo).
@@ -1411,7 +1417,7 @@
     if (params.has('period')) store.set('qa:period', params.get('period'));
     if (parts[0] === 'versions' || parts[0] === 'builds') return renderVersions();   // "builds": link vecchi
     if (parts[0] === 'run') return renderRun(parts[1] || latest().id, parts[2] === 'test' ? parts.slice(3).join('/') : null, params);
-    renderHome();
+    return renderHome();
   }
 
   document.addEventListener('click', async e => {
@@ -1429,10 +1435,11 @@
     }
     const per = e.target.closest('[data-period]');
     if (per) {
+      if (per.dataset.period !== currentPeriod()) QA.loader.show();
       store.set('qa:period', per.dataset.period);
       const path = (location.hash || '#/').split('?')[0];
       history.replaceState(null, '', `${location.pathname}${location.search}${path}?period=${per.dataset.period}`);
-      route();
+      go();
       return;
     }
     const copyEv = e.target.closest('[data-copy-evidence]');
@@ -1586,6 +1593,7 @@
   });
 
   if (idx) initChrome();
-  window.addEventListener('hashchange', route);
-  route();
+  const go = () => Promise.resolve(route()).finally(() => QA.loader.hide());
+  window.addEventListener('hashchange', go);
+  go();
 })();
