@@ -55,13 +55,15 @@
     if (on) nav.scrollLeft = on.offsetLeft - nav.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
   };
 
-  // Le select di piano ed esecuzione: il valore resta nella <select> nascosta, il menu è nostro perché
-  // l'elenco nativo si taglia alla larghezza del controllo e il suo aspetto non si può governare.
+  // Le select di piano ed esecuzione (e quelle della pagina Test): il valore resta nella <select> nascosta,
+  // il menu è nostro perché l'elenco nativo si taglia alla larghezza del controllo e il suo aspetto non
+  // si può governare. Opzioni: search (casella di ricerca), loader (il caricamento quando si sceglie).
+  // Quelle della barra in alto restano per tutta la pagina; le altre vivono finché il controllo è nel documento.
   const PICKER_VISIBLE = 4;
   const pickers = [];
   QA.syncPickers = () => pickers.forEach(update => update());
-  function enhancePicker(select, placeholder) {
-    const wrap = select.closest('.run-picker');
+  function enhancePicker(select, placeholder, { search: searchable = true, loader = true } = {}) {
+    const wrap = select.closest('.run-picker, .picker');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'picker-btn';
@@ -71,8 +73,8 @@
     const menu = document.createElement('div');
     menu.className = 'picker-menu';
     menu.hidden = true;
-    menu.innerHTML = `<input type="search" class="picker-search" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" autocomplete="off" />
-      <div class="picker-list" role="listbox"></div><div class="picker-empty" hidden>Nessun risultato</div>`;
+    menu.innerHTML = (searchable ? `<input type="search" class="picker-search" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" autocomplete="off" />` : '') +
+      `<div class="picker-list" role="listbox"></div><div class="picker-empty" hidden>Nessun risultato</div>`;
     wrap.append(btn, menu);
     const search = menu.querySelector('.picker-search');
     const list = menu.querySelector('.picker-list');
@@ -96,6 +98,7 @@
 
     // Più parole si cercano insieme: "08/2026 2104" trova la data e la versione.
     const applyFilter = () => {
+      if (!search) return;
       const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
       [...list.children].forEach(o => { o.hidden = !terms.every(t => o.dataset.search.includes(t)); });
       empty.hidden = shown().length > 0;
@@ -104,9 +107,9 @@
 
     const open = () => {
       list.innerHTML = [...select.options].map((o, i) => `<button type="button" role="option" class="picker-opt${o.selected ? ' is-selected' : ''}" data-i="${i}" data-search="${esc((o.dataset.search || o.textContent).toLowerCase())}" aria-selected="${o.selected}"${o.disabled ? ' disabled' : ''}>${esc(o.textContent)}</button>`).join('');
-      search.value = '';
+      if (search) search.value = '';
       empty.hidden = true;
-      Object.assign(menu.style, { left: '0', right: 'auto', width: '' });
+      Object.assign(menu.style, { left: '0', right: 'auto', width: '', top: '', bottom: '' });
       list.style.maxHeight = '';
       menu.hidden = false;
       btn.setAttribute('aria-expanded', 'true');
@@ -114,19 +117,22 @@
       const fits = () => { const r = menu.getBoundingClientRect(); return r.left >= 8 && r.right <= innerWidth - 8; };
       if (!fits()) { menu.style.left = 'auto'; menu.style.right = '0'; }
       if (!fits()) { menu.style.right = 'auto'; menu.style.left = `${8 - wrap.getBoundingClientRect().left}px`; }
+      // Se sotto non c'è spazio (es. in fondo all'elenco dei test) si apre verso l'alto.
+      const below = menu.getBoundingClientRect().bottom > innerHeight - 8;
+      if (below && wrap.getBoundingClientRect().top > menu.offsetHeight + 12) Object.assign(menu.style, { top: 'auto', bottom: 'calc(100% + 4px)' });
       // La larghezza resta quella dell'elenco completo: filtrando il menu non si restringe.
       menu.style.width = `${menu.getBoundingClientRect().width}px`;
       const items = [...list.children];
       const selected = Math.max(0, items.findIndex(o => o.classList.contains('is-selected')));
       fitList(Math.max(0, Math.min(selected - 1, items.length - PICKER_VISIBLE)));
       // Sui telefoni il cursore nella casella aprirebbe subito la tastiera sopra l'elenco.
-      const target = matchMedia('(pointer: fine)').matches ? search : (list.querySelector('.is-selected') || btn);
+      const target = search && matchMedia('(pointer: fine)').matches ? search : (list.querySelector('.is-selected') || list.querySelector('.picker-opt') || btn);
       target.focus({ preventScroll: true });
     };
 
     const choose = opt => {
       if (Number(opt.dataset.i) === select.selectedIndex) { close(true); return; }
-      QA.loader.show();
+      if (loader) QA.loader.show();
       select.selectedIndex = Number(opt.dataset.i);
       update();
       close(true);
@@ -134,7 +140,7 @@
     };
 
     btn.addEventListener('click', () => { if (menu.hidden) open(); else close(true); });
-    search.addEventListener('input', applyFilter);
+    if (search) search.addEventListener('input', applyFilter);
     list.addEventListener('click', e => {
       const opt = e.target.closest('.picker-opt');
       if (opt && !opt.disabled) choose(opt);
@@ -146,12 +152,17 @@
       else if (e.key === 'Tab') close(false);
       else if (e.key === 'Enter' && document.activeElement === search) { e.preventDefault(); if (items[0]) choose(items[0]); }
       else if (e.key === 'ArrowDown' && items[at + 1]) { e.preventDefault(); items[at + 1].focus(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); (at > 0 ? items[at - 1] : search).focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); (at > 0 ? items[at - 1] : search || items[0]).focus(); }
     });
-    document.addEventListener('click', e => { if (!wrap.contains(e.target)) close(false); });
-    pickers.push(update);
+    const outside = e => {
+      if (!wrap.isConnected) { document.removeEventListener('click', outside); return; }   // controllo ridisegnato
+      if (!wrap.contains(e.target)) close(false);
+    };
+    document.addEventListener('click', outside);
+    if (wrap.classList.contains('run-picker')) pickers.push(update);
     update();
   }
+  QA.enhancePicker = enhancePicker;
 
   if (QA.scope) {
     const plan = planBySlug(QA.scope.plan);
@@ -187,6 +198,30 @@
     enhancePicker(document.getElementById('run-picker'), 'Cerca per data o versione');
     categories.hidden = false;
     paint();
+
+    // Asset fratelli (es. Backend e Web App): come le categorie, disabilitato se non ha esecuzioni di
+    // questo piano; altrimenti il link apre lo stesso piano (e la stessa categoria, se lì ha test).
+    // Si legge il loro data/index.js; se non si può (es. report aperto da file) il link resta com'è.
+    QA.checkAssets = nav => nav.querySelectorAll('a').forEach(async a => {
+      const base = new URL(a.getAttribute('href'), location.href);
+      let other;
+      try {
+        const text = await (await fetch(new URL('data/index.js', base), { cache: 'no-cache' })).text();
+        other = JSON.parse(text.slice(text.indexOf('QA.plans = ') + 11, text.lastIndexOf('}') + 1));
+      } catch { return; }
+      const same = (other.plans || []).find(p => p.slug === plan.slug);
+      if (!same || !same.runs) {
+        const off = document.createElement('span');
+        off.className = 'disabled';
+        off.setAttribute('aria-disabled', 'true');
+        off.title = `Nessuna esecuzione di ${a.textContent} per questo piano`;
+        off.textContent = a.textContent;
+        a.replaceWith(off);
+        return;
+      }
+      const cat = same.categories.find(c => c.slug === current.slug && c.runs);
+      a.href = `${base.pathname}?plan=${encodeURIComponent(same.slug)}${cat ? `&cat=${encodeURIComponent(cat.slug)}` : ''}`;
+    });
     window.addEventListener('hashchange', paint);
     return;
   }
