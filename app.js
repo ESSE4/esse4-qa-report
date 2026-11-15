@@ -149,6 +149,18 @@
    * storico (idx.tests[key].b) fino all'esecuzione aperta (runIdx), uno per id. "now" se è sul test
    * in questa esecuzione.
    */
+  /**
+   * Categorie del test come le conta il report: quella delle tre (validazione, non regressione,
+   * integrazione) è la categoria della scheda aperta; le altre restano. Le esecuzioni salvate prima
+   * delle categorie attuali portano le etichette di allora, che qui non devono confondere.
+   */
+  const CATEGORY_NAMES = { validation: 'Validation Test', 'non-regression': 'Non Regression Test', integration: 'Integration Test' };
+  const categoriesOf = t => {
+    const known = Object.values(CATEGORY_NAMES), own = (t.categories || []).filter(c => !known.includes(c));
+    const scope = QA.scope && CATEGORY_NAMES[QA.scope.cat];
+    return scope ? [scope, ...own] : (t.categories || []);
+  };
+
   /** Id vecchi dei bug → id attuale (Previously, raccolto dal generatore come "aka"). */
   let bugAlias = null;
   const bugId = id => {
@@ -160,9 +172,12 @@
   };
   function bugsOf(t, runIdx) {
     const map = new Map();
+    const until = runIdx == null || runIdx < 0 ? Infinity : new Date(runs[runIdx].start).getTime();
     (((idx.tests || {})[t.key] || {}).b || []).forEach(b => {
-      if (!(b.r || []).some(i => runIdx == null || runIdx < 0 || i <= runIdx)) return;   // collegato solo dopo questa esecuzione
-      map.set(b.id.toLowerCase(), { ...b });
+      // Fino all'esecuzione aperta (lo storico è di tutti i piani e categorie: si confronta la data).
+      const p = (b.p || []).filter(x => new Date(x[0]).getTime() <= until);
+      if (!p.some(x => x[2])) return;   // collegato solo dopo questa esecuzione
+      map.set(b.id.toLowerCase(), { ...b, p });
     });
     const add = (raw, title, role, url) => {
       const id = bugId(raw), k = id.toLowerCase(), was = map.get(k) || {};
@@ -186,16 +201,14 @@
     // Storia di un bug: gli episodi in cui era aperto (test fallito con [KnownDefect] o bloccato da
     // [BlockedBy]) fino all'esecuzione aperta, ciascuno con la versione in cui è stato risolto. Il
     // collegamento resta sul test per sempre: conta quando era aperto, non quanto è rimasto collegato.
-    const st = (((idx.tests || {})[t.key] || {}).st) || '';
-    const last = runIdx == null || runIdx < 0 ? st.length - 1 : Math.min(runIdx, st.length - 1);
     const short = v => { const p = String(v).split('.'); return p.length > 3 ? p.slice(-1)[0] : v; };   // 5.0.5.20.32001 → 32001
     const story = b => {
-      const open = new Map((b.o || []).map(([i, role]) => [i, role]));
+      // Punti dello storico: [inizio, versione, stato]; "d" e "b" vogliono dire aperto.
+      const pts = b.p || [], ver = i => pts[i][1];
       const eps = [];
       let cur = null;
-      for (let i = 0; i <= last; i++) {
-        if (st[i] === '-') continue;   // il test non c'era
-        const role = open.get(i);
+      for (let i = 0; i < pts.length; i++) {
+        const role = pts[i][2] === 'd' || pts[i][2] === 'b' ? pts[i][2] : null;
         // Cambio di ruolo (lo dimostrava, ora lo blocca o viceversa): un episodio nuovo, il bug non si è chiuso.
         if (role) { if (cur && cur.role !== role) { eps.push({ ...cur, handoff: true }); cur = null; } if (!cur) cur = { from: i, to: i, role }; else cur.to = i; }
         else if (cur) { eps.push({ ...cur, fixed: i }); cur = null; }
@@ -206,7 +219,7 @@
         const ongoing = e.fixed == null && !e.handoff, reopened = k && eps[k - 1].fixed != null;
         const verb = e.role === 'b' ? (ongoing ? 'blocca il test' : 'bloccava il test') : (reopened ? 'riaperto' : ongoing || !k ? 'aperto' : 'lo dimostrava');
         // Più esecuzioni sulla stessa versione: si parla di versioni, non di esecuzioni.
-        const same = (a, b) => runs[a].version === runs[b].version;
+        const same = (a, b) => ver(a) === ver(b);
         const when = ongoing ? `dalla ${fmt(e.from)}` : same(e.from, e.to) ? `nella ${fmt(e.from)}` : `${fmt(e.from)} → ${fmt(e.to)}`;
         const fixed = e.fixed == null ? '' : same(e.to, e.fixed) ? ' · risolto nella stessa versione' : ` · risolto nella ${fmt(e.fixed)}`;
         const text = `${verb} ${when}${fixed}`;
@@ -215,8 +228,8 @@
       const now = eps[eps.length - 1];
       return {
         cls: now.fixed != null ? 'ok' : now.role === 'b' ? 'blk' : 'ko',
-        text: say(i => short(runs[i].version)),
-        tip: say(i => runs[i].version),
+        text: say(i => short(ver(i))),
+        tip: say(i => ver(i)),
       };
     };
     const items = LINK_KINDS.flatMap(([k, label, icon]) => all[k].map(l => ({
@@ -1403,7 +1416,7 @@
     else if (c.change === 'new') callout = co('c-new', 'plus', `<b>Test nuovo</b>: non c'era nell'esecuzione di confronto${t.status === 'failed' ? ' e fallisce già alla prima' : t.status === 'broken' ? ' e si rompe già alla prima' : ''}.`);
     if (c.flaky) callout += co('c-flaky', 'zig', `<b>Instabile</b>: sulla versione <span class="mono">${esc(run.version)}</span> ha dato esiti diversi tra un'esecuzione e l'altra.`);
 
-    const labels = [...(t.categories || []).map(v => ['tag', v]), ...Object.entries(t.properties || {})];
+    const labels = [...categoriesOf(t).map(v => ['tag', v]), ...Object.entries(t.properties || {})];
     const tabs = [
       ['overview', 'Dettaglio', 'list', null],
       ['history', 'Storico', 'history', hist ? hist.st.replace(/-/g, '').length : 0],
