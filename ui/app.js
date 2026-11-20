@@ -348,11 +348,10 @@
   // ================================================================== intestazione
 
   function initChrome() {
-    // Con un piano aperto il titolo dice cosa si sta leggendo (plans.js); altrimenti quello del report.
+    // Con un piano aperto il titolo dice cosa si sta leggendo (plans.js); altrimenti quello del report. Nella
+    // barra resta l'etichetta fissa "Test Report": il titolo completo va nella scheda e sul logo.
     const heading = QA.heading || { title: idx.title || 'Report dei test', detail: '' };
     const fullTitle = heading.detail ? `${heading.title} · ${heading.detail}` : heading.title;
-    document.getElementById('brand-title').textContent = heading.title;
-    document.getElementById('brand-sub').textContent = heading.detail;
     document.querySelector('.brand').title = `${fullTitle}\nReport generato il ${dt(idx.generated)}`;
     document.title = fullTitle;
     // Report fratelli nello stesso sito (es. API e frontend), ciascuno con il proprio storico.
@@ -1081,8 +1080,11 @@
       const name = m ? m[1].split('.').pop() : 'eccezione';
       return { key: 'exc:' + name, label: `Eccezione del sistema: ${name}`, icon: 'server', cls: 'c-reg', detail: h.length > 140 ? h.slice(0, 140) + '…' : h };
     }
+    // Un passo fallito senza atteso e ottenuto non è una verifica: è un'eccezione nel passo (es. un
+    // elemento della pagina che non c'è), quindi un errore fuori dalle verifiche.
     const ff = findFailure(t.steps);
-    const fa = ff && { failed: ff.leaf };
+    const verified = ff && (ff.leaf.kind === 'check' || detail(ff.leaf, 'atteso') != null || detail(ff.leaf, 'ottenuto') != null);
+    const fa = verified && { failed: ff.leaf };
     if (fa) {
       const e = detail(fa.failed, 'atteso') || '', g = detail(fa.failed, 'ottenuto') || '';
       const se = /^(\d)(\d\d)\s/.exec(e), sg = /^(\d)(\d\d)\s/.exec(g);
