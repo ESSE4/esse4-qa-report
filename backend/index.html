@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Report dei test</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" href="app.ico" sizes="any" />
+  <link rel="stylesheet" href="app.css" />
+  <script>
+    // Tema scelto prima del primo disegno (niente lampo chiaro/scuro).
+    try { var t = localStorage.getItem('qa:theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) { }
+  </script>
+</head>
+<body>
+  <div class="page-loader" id="page-loader" role="status" aria-live="polite"><span class="page-loader-spin" aria-hidden="true"></span><span>Caricamento…</span></div>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="logo.png" width="30" height="30" alt="" />
+      <!-- Etichetta fissa: piano, categoria, asset e piattaforma li dice già la barra (il titolo completo è
+           nel titolo della scheda e al passaggio del mouse sul logo). -->
+      <span class="brand-text"><span class="brand-title">Test Report</span></span>
+    </a>
+    <label class="run-picker plan-picker" hidden><span class="sr-only">Piano di rilascio</span><select id="plan-picker" aria-label="Piano di rilascio"></select></label>
+    <nav class="suitenav" id="catnav" aria-label="Categoria" hidden></nav>
+    <nav class="suitenav" id="suitenav" aria-label="Asset" hidden></nav>
+    <nav class="suitenav" id="platnav" aria-label="Piattaforma" hidden></nav>
+    <nav class="suitenav topnav" id="topnav" aria-label="Sezioni">
+      <a href="#/" data-nav="home">Panoramica</a>
+      <a href="#/versions" data-nav="versions">Versioni</a>
+      <a href="#/run" data-nav="run">Test</a>
+    </nav>
+    <div class="topbar-right">
+      <label class="run-picker"><span class="sr-only">Esecuzione</span><select id="run-picker" aria-label="Esecuzione"></select></label>
+      <button type="button" class="icon-btn" id="theme-btn" title="Tema chiaro/scuro" aria-label="Tema chiaro/scuro"></button>
+    </div>
+  </header>
+
+  <main id="app" class="app" tabindex="-1">
+    <div class="loading">Caricamento…</div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p class="noscript">Il report richiede JavaScript.</p></noscript>
+  <script>
+    // Piano e categoria scelti: decidono quali dati leggere (document.write li carica prima di app.js,
+    // anche con il report aperto da file).
+    (function () {
+      // Con piattaforme (?pf=android) i dati stanno in una cartella in più: data/scopes/<piano>/<categoria>/<pf>/.
+      var q = new URLSearchParams(location.search), plan = q.get('plan'), cat = q.get('cat'), pf = q.get('pf'), ok = /^[\w-]+$/;
+      var scope = plan && cat && ok.test(plan) && ok.test(cat) ? { plan: plan, cat: cat, pf: pf && ok.test(pf) ? pf : null } : null;
+      window.QA = { scope: scope, dataBase: scope ? 'data/scopes/' + plan + '/' + cat + '/' + (scope.pf ? scope.pf + '/' : '') : 'data/' };
+      document.write('<script src="data/index.js"><\/script>');
+      if (scope) document.write('<script src="' + QA.dataBase + 'index.js"><\/script>');
+    })();
+  </script>
+  <script src="evidence.js"></script>
+  <script src="plans.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
