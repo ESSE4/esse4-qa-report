@@ -35,7 +35,7 @@
   --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --topbar-h: 56px;
-  --picker-w: 320px; /* piano ed esecuzione hanno sempre la stessa larghezza */
+  --picker-w: 320px; /* larghezza del piano; l'esecuzione è larga quanto il suo testo */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -99,12 +99,11 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
 
 .topbar { position: sticky; top: 0; z-index: 50; height: var(--topbar-h); display: flex; align-items: center; gap: 20px; padding: 0 20px;
   background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: saturate(1.4) blur(8px); border-bottom: 1px solid var(--border); }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--text); min-width: 212px; flex: 1 1000 auto; } /* quando manca spazio si accorcia per primo il titolo */
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); flex: 1 0 auto; } /* loghi ed etichetta fissa: prende lo spazio libero, così il resto della barra sta a destra */
 .brand:hover { text-decoration: none; }
 .brand-logo { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; display: block; }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
-.brand-title { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.brand-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-title { font-weight: 800; font-size: 15px; white-space: nowrap; }
 .suitenav, .period { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 10px; flex: 0 0 auto; }
 .suitenav[hidden] { display: none; }
 .suitenav a, .suitenav span, .period-btn { flex: 0 0 auto; padding: 4px 10px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
@@ -113,6 +112,10 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
 .suitenav .disabled { opacity: .5; cursor: not-allowed; }
 .topbar-right { display: contents; }
 .run-picker { position: relative; min-width: 0; display: flex; flex: 0 1 var(--picker-w); }
+/* L'esecuzione (data · versione · superati) è larga quanto il suo testo, fino a un massimo, e non cede
+   spazio: quando la barra è piena si accorcia il piano, che ha il nome intero nel menu. */
+.run-picker:not(.plan-picker) { flex: 0 0 auto; max-width: 440px; }
+.run-picker:not(.plan-picker) .picker-btn { width: auto; max-width: 100%; }
 .run-picker select { display: none; }
 .run-picker[hidden] { display: none; }
 .picker-btn { width: 100%; min-width: 0; height: 34px; color: var(--text); font: inherit; text-align: left; white-space: nowrap; overflow: hidden; padding: 0 34px 0 12px; border: 1px solid var(--border); border-radius: 8px;
@@ -852,33 +855,38 @@ a.icon-btn:hover { text-decoration: none; }
 .data-details > summary { cursor: pointer; font-size: 12.5px; }
 
 /* Barra in alto, nell'ordine di lettura: piano, categoria, asset, sezione, esecuzione. Una riga finché
-   ci sta, poi due (con --topbar-h aggiornata, così gli elementi fissi sotto la barra restano al posto giusto). */
+   il contenuto ci sta, poi due: non dipende dalla larghezza dello schermo ma da quanto testo c'è (nome del
+   piano, asset, esecuzione). La classe bar-wrap la mette plans.js (fitTopbar) quando la riga trabocca o il
+   piano scenderebbe sotto una larghezza leggibile; --topbar-h si aggiorna, così gli elementi fissi sotto la
+   barra restano al posto giusto. */
 @media (max-width: 1599.98px) {
   .topbar { gap: 10px; padding: 0 12px; }
   .brand { gap: 8px; }
   :root { --picker-w: 190px; }
 }
-@media (max-width: 1365.98px) {
-  :root { --topbar-h: 84px; }
-  .topbar { flex-wrap: wrap; align-content: center; row-gap: 3px; }
-  .topbar::after { content: ""; flex: 0 0 100%; height: 0; order: 5; }
-  .brand { order: 1; flex: 1 1 0; min-width: 150px; }
-  .plan-picker { order: 2; }
-  #catnav { order: 3; }
-  #theme-btn { order: 4; margin-left: auto; }
-  #suitenav { order: 6; margin-left: auto; }
-  #topnav { order: 7; }
-  .run-picker:not(.plan-picker) { order: 8; }
-  .suitenav { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .suitenav::-webkit-scrollbar { display: none; }
-}
+html.bar-wrap { --topbar-h: 84px; }
+html.bar-wrap .topbar { flex-wrap: wrap; align-content: center; row-gap: 3px; }
+html.bar-wrap .topbar::after { content: ""; flex: 0 0 100%; height: 0; order: 5; }
+html.bar-wrap .brand { order: 1; }
+html.bar-wrap #platnav { order: 6; }
+html.bar-wrap .plan-picker { order: 2; }
+html.bar-wrap #catnav { order: 3; }
+html.bar-wrap #theme-btn { order: 4; margin-left: auto; }
+html.bar-wrap #suitenav { order: 6; margin-left: auto; }
+html.bar-wrap #topnav { order: 7; }
+html.bar-wrap .run-picker:not(.plan-picker) { order: 8; }
+html.bar-wrap .suitenav { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+html.bar-wrap .suitenav::-webkit-scrollbar { display: none; }
 @media (max-width: 767.98px) {
   .brand { flex: 0 0 auto; min-width: 30px; }
   .brand-text { display: none; }
   :root { --picker-w: 120px; }
-  .run-picker { flex: 0 0 var(--picker-w); }
+  /* Sul telefono lo spazio è poco: piano ed esecuzione tornano a una larghezza fissa. */
+  .run-picker, .run-picker:not(.plan-picker) { flex: 0 0 var(--picker-w); max-width: none; }
+  .run-picker:not(.plan-picker) .picker-btn { width: 100%; }
   #catnav { flex: 1 1 0; }
   #suitenav { flex: 1 1 0; margin-left: 0; }
+  #platnav { flex: 0 0 auto; }
   #topnav { flex: 0 0 auto; }
 }
 @media (max-width: 575.98px) {
@@ -894,7 +902,7 @@ a.icon-btn:hover { text-decoration: none; }
 .picker-menu[hidden] { display: none; }
 .picker-search { display: block; width: 100%; height: 30px; margin-bottom: 4px; padding: 0 8px; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 13px; }
 .picker-search:focus { outline: 0; border-color: var(--accent); }
-.picker-list { position: relative; overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: stable; }
+.picker-list { position: relative; overflow-y: auto; scrollbar-width: thin; }
 .picker-empty { padding: 8px 10px; color: var(--muted); font-size: 13px; }
 .picker-empty[hidden], .picker-opt[hidden] { display: none; }
 .picker-opt { display: block; width: 100%; padding: 6px 10px; color: var(--text-2); background: none; border: 0; border-radius: 6px; font: inherit; text-align: left; white-space: normal; cursor: pointer; }
@@ -902,9 +910,9 @@ a.icon-btn:hover { text-decoration: none; }
 .picker-opt.is-selected { color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
 .picker-opt:disabled { color: var(--muted); opacity: .6; cursor: not-allowed; background: none; }
 
-/* Loader del cambio di pagina: visibile dal primo disegno, lo toglie plans.js */
-html { scrollbar-gutter: stable; }
-html:has(.page-loader:not(.is-done)) { overflow: hidden; } /* sotto il loader la pagina non scorre */
+/* Loader del cambio di pagina: visibile dal primo disegno, lo toglie plans.js. Copre tutta la finestra;
+   la pagina sotto non si blocca, altrimenti la barra di scorrimento sparirebbe e tornerebbe, spostando
+   tutto di lato. */
 .page-loader { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--bg); color: var(--text-2); font-size: 16px; font-weight: 600; }
 .page-loader.is-done { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, visibility .18s; }
 .page-loader-spin { width: 56px; height: 56px; border: 5px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: page-loader-spin .8s linear infinite; }

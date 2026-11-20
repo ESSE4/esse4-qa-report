@@ -12,6 +12,25 @@
   const QA = window.QA;
   const root = QA.plans;
 
+  // Barra in alto su una riga o su due secondo il contenuto, non lo schermo: va su due se la riga trabocca
+  // o se il piano scenderebbe sotto PLAN_MIN_W (molti asset, l'esecuzione larga quanto il suo testo). Si
+  // rimisura quando cambiano la finestra o il testo della barra.
+  const PLAN_MIN_W = 160;
+  const fitTopbar = () => {
+    const html = document.documentElement, bar = document.querySelector('.topbar');
+    if (!bar) return;
+    html.classList.remove('bar-wrap');
+    const plan = bar.querySelector('.plan-picker:not([hidden])');
+    const tight = bar.scrollWidth > bar.clientWidth + 1 || (plan && plan.getBoundingClientRect().width < PLAN_MIN_W);
+    html.classList.toggle('bar-wrap', !!tight);
+  };
+  let fitFrame = 0;
+  const fitSoon = () => { cancelAnimationFrame(fitFrame); fitFrame = requestAnimationFrame(fitTopbar); };
+  window.addEventListener('resize', fitSoon);
+  const topbar = document.querySelector('.topbar');
+  if (topbar) new MutationObserver(fitSoon).observe(topbar, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class'] });
+  fitSoon();
+
   // Il loader copre il cambio di pagina: resta almeno LOADER_MIN_MS dal clic e, se i dati arrivano dopo,
   // finché non sono pronti. L'istante del clic passa alla pagina successiva in sessionStorage.
   const LOADER_MIN_MS = 500;
@@ -38,7 +57,7 @@
       if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       // Una sezione già aperta non cambia indirizzo: niente hashchange, e il loader non si toglierebbe più.
       const section = e.target.closest('#topnav a');
-      if (e.target.closest('#catnav a, #suitenav a') || (section && section.hash !== location.hash)) api.show();
+      if (e.target.closest('#catnav a, #suitenav a, #platnav a') || (section && section.hash !== location.hash)) api.show();
     });
     return api;
   })();
@@ -167,27 +186,91 @@
   if (QA.scope) {
     const plan = planBySlug(QA.scope.plan);
     const current = plan && plan.categories.find(c => c.slug === QA.scope.cat);
+
+    // Piattaforme (Android, iOS…): ognuna ha i suoi dati e i suoi confronti. Senza ?pf= valido si va sulla
+    // piattaforma dell'esecuzione nell'indirizzo, se c'è, altrimenti sulla prima con esecuzioni.
+    const platforms = root.platforms || [];
+    if (platforms.length && current) {
+      const ofCategory = (current.platforms || []).filter(p => p.runs);
+      if (!ofCategory.some(p => p.slug === QA.scope.pf) && ofCategory.length) {
+        const m = location.hash.match(/^#\/run\/([^/?]+)/) || location.hash.match(/[?&]run=([^&]+)/);
+        const fromRun = m && root.runScopes[decodeURIComponent(m[1])];
+        const target = ofCategory.find(p => fromRun && p.slug === fromRun.pf) || ofCategory[0];
+        location.replace(`${location.pathname}?plan=${plan.slug}&cat=${current.slug}&pf=${target.slug}${location.hash}`);
+        return;
+      }
+    }
     if (!QA.index || !current) { location.replace(location.pathname + (plan ? `?plan=${plan.slug}` : '')); return; }
+    const platform = platforms.find(p => p.slug === QA.scope.pf);
+    const pfParam = platform ? `&pf=${platform.slug}` : '';
 
     const asset = (root.nav || []).find(n => n.active);
+    // L'ultimo asset aperto: la pagina d'ingresso del sito (qareport landing) ci riporta qui.
+    if (asset) try { localStorage.setItem('qa:asset', asset.label); } catch { /* storage non disponibile */ }
     // Un nome che dice già "Rilascio" non lo ripete; un piano senza titolo si chiama con la sua versione.
     const release = /^rilascio\b/i.test(plan.title || '') ? plan.title : `Rilascio ${plan.title || plan.id}`;
-    QA.heading = { title: `Esiti di ${current.label.toLowerCase()}`, detail: asset ? `${release} · ${asset.label}` : release };
+    const where = [release, asset && asset.label, platform && platform.label].filter(Boolean).join(' · ');
+    QA.heading = { title: `Esiti di ${current.label.toLowerCase()}`, detail: where };
 
     // Cambiando categoria si resta sulla stessa pagina, se l'esecuzione aperta c'è anche lì.
     const hashFor = cat => {
       const m = location.hash.match(/^#\/run\/([^/?]+)/);
       if (!m) return location.hash;
-      const where = root.runScopes[decodeURIComponent(m[1])];
-      return where && where.plan === plan.slug && where.categories.includes(cat.slug) ? location.hash : '';
+      const at = root.runScopes[decodeURIComponent(m[1])];
+      return at && at.plan === plan.slug && at.categories.includes(cat.slug) ? location.hash : '';
     };
+    // La stessa piattaforma nell'altra categoria, se lì ha esecuzioni (altrimenti decide la pagina).
+    const pfFor = cat => platform && (cat.platforms || []).some(p => p.slug === platform.slug && p.runs) ? pfParam : '';
     const categories = document.getElementById('catnav');
     const categoryItem = c => {
       if (c.slug === current.slug) return `<span class="active" aria-current="page">${esc(c.label)}</span>`;
       if (!c.runs) return `<span class="disabled" aria-disabled="true" title="Nessun test in questa categoria per questo piano">${esc(c.label)}</span>`;
-      return `<a href="?plan=${esc(plan.slug)}&cat=${esc(c.slug)}${esc(hashFor(c))}">${esc(c.label)}</a>`;
+      return `<a href="?plan=${esc(plan.slug)}&cat=${esc(c.slug)}${esc(pfFor(c))}${esc(hashFor(c))}">${esc(c.label)}</a>`;
     };
-    const paint = () => { categories.innerHTML = plan.categories.map(categoryItem).join(''); QA.revealActive(categories); };
+
+    // Selettore della piattaforma, nella barra dopo gli asset. Si passa all'esecuzione corrispondente
+    // dell'altra piattaforma: l'ultima sulla stessa versione, altrimenti l'ultima iniziata prima.
+    const platNav = document.getElementById('platnav');
+    const counterpart = (runId, pf) => {
+      const from = root.runScopes[runId];
+      if (!from) return null;
+      const candidates = Object.entries(root.runScopes)
+        .filter(([, r]) => r.pf === pf && r.plan === plan.slug && r.categories.includes(current.slug))
+        .sort((a, b) => Date.parse(a[1].start) - Date.parse(b[1].start));
+      const same = candidates.filter(([, r]) => r.version === from.version);
+      const pick = same.length ? same : candidates.filter(([, r]) => Date.parse(r.start) <= Date.parse(from.start));
+      return pick.length ? pick[pick.length - 1][0] : null;
+    };
+    const hashOn = pf => {
+      const h = location.hash;
+      const m = h.match(/^#\/run\/([^/?]+)(\/test\/[^?]*)?/) || h.match(/^#\/(versions)?\?(?:.*&)?run=([^&]+)/);
+      if (!m) return h;
+      if (h.startsWith('#/run/')) {
+        const id = counterpart(decodeURIComponent(m[1]), pf);
+        return id ? `#/run/${encodeURIComponent(id)}${m[2] || ''}` : '#/run';
+      }
+      const id = counterpart(decodeURIComponent(m[2]), pf);
+      return `#/${m[1] || ''}${id ? `?run=${encodeURIComponent(id)}` : ''}`;
+    };
+    const paintPlatforms = () => {
+      if (!platforms.length) return;
+      const ofCategory = current.platforms || [];
+      platNav.innerHTML = platforms.map(p => {
+        if (platform && p.slug === platform.slug) return `<span class="active" aria-current="page">${esc(p.label)}</span>`;
+        if (!ofCategory.some(x => x.slug === p.slug && x.runs))
+          return `<span class="disabled" aria-disabled="true" title="Nessuna esecuzione di ${esc(p.label)} per questo piano e categoria">${esc(p.label)}</span>`;
+        return `<a href="?plan=${esc(plan.slug)}&cat=${esc(current.slug)}&pf=${esc(p.slug)}${esc(hashOn(p.slug))}">${esc(p.label)}</a>`;
+      }).join('');
+      platNav.hidden = false;
+    };
+    // Un asset senza piattaforme accanto a uno che ne ha (es. Backoffice e Consumer App): il selettore c'è
+    // lo stesso, spento, così la barra non cambia forma passando da un asset all'altro.
+    QA.showDisabledPlatforms = names => {
+      if (platforms.length || !names.length) return;
+      platNav.innerHTML = names.map(n => `<span class="disabled" aria-disabled="true" title="${esc(asset ? asset.label : 'Questo asset')} non ha piattaforme">${esc(n)}</span>`).join('');
+      platNav.hidden = false;
+    };
+    const paint = () => { categories.innerHTML = plan.categories.map(categoryItem).join(''); QA.revealActive(categories); paintPlatforms(); };
 
     const option = p => `<option value="${esc(p.slug)}" data-search="${esc(`${planName(p)} ${p.id}`)}"${p === plan ? ' selected' : ''}${p.runs ? '' : ' disabled'}>${esc(planName(p))}${p.runs ? '' : ' · nessuna esecuzione'}</option>`;
     const picker = document.getElementById('plan-picker');
@@ -199,6 +282,13 @@
     categories.hidden = false;
     paint();
 
+    // Le piattaforme degli asset fratelli, raccolte mentre si leggono i loro dati.
+    const seen = new Set();
+    const siblingPlatforms = names => {
+      names.forEach(n => seen.add(n));
+      QA.showDisabledPlatforms([...seen].sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' })));
+    };
+
     // Asset fratelli (es. Backend e Web App): come le categorie, disabilitato se non ha esecuzioni di
     // questo piano; altrimenti il link apre lo stesso piano (e la stessa categoria, se lì ha test).
     // Si legge il loro data/index.js; se non si può (es. report aperto da file) il link resta com'è.
@@ -209,6 +299,7 @@
         const text = await (await fetch(new URL('data/index.js', base), { cache: 'no-cache' })).text();
         other = JSON.parse(text.slice(text.indexOf('QA.plans = ') + 11, text.lastIndexOf('}') + 1));
       } catch { return; }
+      siblingPlatforms((other.platforms || []).map(p => p.label));
       const same = (other.plans || []).find(p => p.slug === plan.slug);
       if (!same || !same.runs) {
         const off = document.createElement('span');
@@ -232,9 +323,9 @@
   document.getElementById('topnav').style.display = 'none';
   document.getElementById('run-picker').closest('.run-picker').style.display = 'none';
 
-  const loadIndex = (plan, cat) => new Promise(resolve => {
+  const loadIndex = (plan, cat, pf) => new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = `data/scopes/${plan}/${cat}/index.js`;
+    s.src = `data/scopes/${plan}/${cat}/${pf ? pf + '/' : ''}index.js`;
     s.onload = () => resolve(QA.index);
     s.onerror = () => resolve(null);
     document.head.appendChild(s);
@@ -245,12 +336,13 @@
     const m = location.hash.match(/^#\/run\/([^/?]+)(?:\/test\/([^?]*))?/);
     const where = m && root.runScopes[decodeURIComponent(m[1])];
     if (!where || !where.categories.length) return false;
-    const go = cat => { location.replace(`?plan=${where.plan}&cat=${cat}${location.hash}`); return true; };
+    const pf = where.pf ? `&pf=${where.pf}` : '';
+    const go = cat => { location.replace(`?plan=${where.plan}&cat=${cat}${pf}${location.hash}`); return true; };
     if (m[2]) {
       const key = decodeURIComponent(m[2]);
       const renamed = (root.renames || {})[key];
       for (const cat of where.categories) {
-        const index = await loadIndex(where.plan, cat);
+        const index = await loadIndex(where.plan, cat, where.pf);
         const test = index && (index.tests[key] || index.tests[renamed]);
         const at = index ? index.runs.findIndex(r => r.id === decodeURIComponent(m[1])) : -1;
         if (test && at >= 0 && test.st[at] !== '-') return go(cat);
