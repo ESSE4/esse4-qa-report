@@ -14,11 +14,13 @@
     var ASSETS = [{"label":"Backend","url":"backend/"},{"label":"Web App","url":"ui/"}];
     // Link scritti quando nella radice c'era il report del primo asset (un'esecuzione o un test nell'indirizzo,
     // o piano e categoria scelti): continuano ad aprirsi, sul primo asset del --nav.
-    (function () {
+    // location.replace non ferma lo script: senza il controllo, il salto all'ultimo asset sotto lo sostituirebbe.
+    var FORWARD = (function () {
       var q = new URLSearchParams(location.search);
-      if (location.hash.indexOf('#/') === 0 || q.has('cat')) location.replace(ASSETS[0].url + location.search + location.hash);
+      return location.hash.indexOf('#/') === 0 || q.has('cat');
     })();
-    try {
+    if (FORWARD) location.replace(ASSETS[0].url + location.search + location.hash);
+    else try {
       var theme = localStorage.getItem('qa:theme'); if (theme) document.documentElement.dataset.theme = theme;
       var last = localStorage.getItem('qa:asset'), q0 = new URLSearchParams(location.search);
       var hit = ASSETS.filter(function (a) { return a.label === last; })[0];
