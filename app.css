@@ -517,6 +517,18 @@ a.issue-link:hover { text-decoration: none; box-shadow: 0 0 0 1px currentColor; 
 .strip .P { background: var(--ok); } .strip .F { background: var(--ko); } .strip .B { background: var(--blk); } .strip .I { background: var(--inc); } .strip .G { background: var(--skip); } .strip .x { background: var(--surface-3); }
 .strip .R { background: var(--brk); }
 .strip .current { outline: 2px solid var(--text); outline-offset: 1px; }
+/* Percorso del test tra piani e categorie: fasce alterne come le versioni nell'istogramma. Gli esiti
+   scorrono come un testo e la pagina li impagina (paintTrail): qui solo l'aspetto, posizioni in linea. */
+.strip.trail { display: block; position: relative; min-height: 22px; }
+.strip.trail > * { position: absolute; }
+.trail-frag { border-radius: 6px; }
+.trail-frag.alt { background: var(--surface-3); }
+/* Il nome è largo quanto il primo pezzo della fascia: intero se c'è spazio, altrimenti accorciato. */
+.trail-l { position: absolute; left: 6px; top: 4px; font-size: 10.5px; line-height: 14px; font-weight: 700; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trail-frag.here .trail-l { color: var(--text); }
+.card:has(.strip.trail.all) .trail-n { display: none; }
+.trail-more { padding: 0; font-size: inherit; }
+.strip .trail-promo { width: 3px; border-radius: 2px; background: var(--text); }
 
 .dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: 13px; }
 .dl dt { color: var(--muted); font-weight: 600; }
