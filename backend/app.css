@@ -368,6 +368,20 @@ a.issue-link:hover { text-decoration: none; box-shadow: 0 0 0 1px currentColor; 
 .lk-st.blk i { background: var(--blk); } .lk-st.blk { color: var(--blk-text); }
 .lk-st.ok i { background: var(--ok); } .lk-st.ok { color: var(--ok-text); }
 .lk-st.muted { color: var(--muted); font-weight: 500; }
+/* Ciclo di vita del test: una tappa per test case, il pallino colorato è il piano aperto. */
+.life { list-style: none; margin: 0; padding: 0; }
+.life-step { position: relative; display: flex; gap: 12px; padding: 0 0 16px; }
+.life-step:last-child { padding-bottom: 0; }
+.life-step:not(:last-child)::before { content: ""; position: absolute; left: 6px; top: 16px; bottom: 0; width: 2px; background: var(--border); }
+.life-dot { flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; background: var(--surface-3); border: 2px solid var(--border); box-sizing: border-box; }
+.life-step.here .life-dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+.life-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.life-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; }
+.life-h a { display: inline-flex; align-items: center; gap: 4px; }
+.life-what { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.life-where { font-size: 13px; overflow-wrap: anywhere; }
+.life-when { font-size: 12.5px; }
+.life-step.gone .life-where, .life-step.gone .life-h { color: var(--muted); }
 .lk-table .lk-st { white-space: normal; align-items: baseline; } .lk-table .lk-st i { flex: 0 0 auto; transform: translateY(-1px); }
 .lk-card { padding: 6px 18px 10px; }
 /* Tabella dei collegamenti. */

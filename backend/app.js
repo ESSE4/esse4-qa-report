@@ -143,6 +143,12 @@
   };
   /** Tipi di collegamento, nell'ordine della scheda: dal più ampio al più puntuale. */
   const LINK_KINDS = [['feature', 'Feature', 'flag'], ['pbi', 'PBI', 'list'], ['testcase', 'Test case', 'check'], ['bug', 'Bug', 'bug']];
+  /** Nome di un piano dal suo slug, come nel menu della barra. */
+  const planTitle = slug => {
+    const p = ((QA.plans && QA.plans.plans) || []).find(x => x.slug === slug);
+    return p ? (p.title || (/^\d/.test(p.id) ? `Piano ${p.id}` : p.id)) : slug;
+  };
+  const CAT_LABELS = { validation: 'Validazione', 'non-regression': 'Non regressione', integration: 'Integrazione' };
 
   /**
    * Bug del test: quelli di oggi ([KnownDefect], [BlockedBy], [Bug]) e quelli che ha avuto nello
@@ -241,6 +247,33 @@
     return `<section class="card lk-card"><table class="table lk-table"><thead><tr><th>Tipo</th><th>Id</th><th>Titolo</th><th>Storia</th></tr></thead><tbody>
       ${items.map(x => `<tr><td class="nowrap">${ic(x.icon)} ${esc(x.label)}</td><td class="nowrap">${idHtml(x)}${x.aka.length ? `<span class="lk-aka" title="Lo stesso bug con gli id di prima">prima ${x.aka.map(esc).join(', ')}</span>` : ''}</td><td>${titleHtml(x)}</td><td>${storyHtml(x)}</td></tr>`).join('')}
       </tbody></table></section>`;
+  }
+
+  /**
+   * Scheda "Ciclo di vita": le tappe del test, una per test case (l, dal generatore), dalla più recente in
+   * alto a quella con cui il test è nato in fondo; le altre sono i cloni dei rilasci successivi. Il pallino
+   * colorato è la tappa del piano aperto. Ogni tappa porta alla sua prima esecuzione, nel report dove è stata
+   * registrata.
+   */
+  function lifecyclePanel(t, life) {
+    const here = QA.scope || {};
+    const at = life.reduce((k, s, i) => (s.plans || []).includes(here.plan) ? i : k, -1);
+    const steps = life.map((s, i) => {
+      const plans = (s.plans || []).map(planTitle).join(' → ');
+      const cats = (s.cats || []).filter(Boolean).map(c => (CAT_LABELS[c] || c).toLowerCase()).join(' → ');
+      const what = i === 0 ? 'Nato' : 'Clonato';
+      const url = linkUrl('testcase', s.id, null);
+      const id = url ? `<a class="mono" href="${esc(url)}" target="_blank" rel="noopener" title="Apri il test case ${esc(s.id)}">${esc(s.id)}${ic('external')}</a>` : `<span class="mono">${esc(s.id)}</span>`;
+      const plan0 = (s.plans || [])[0], cat0 = (s.cats || [])[0];
+      const first = s.run && plan0 && cat0 ? `${plan0 === here.plan && cat0 === here.cat ? '' : `?plan=${encodeURIComponent(plan0)}&cat=${encodeURIComponent(cat0)}${here.pf ? '&pf=' + encodeURIComponent(here.pf) : ''}`}#/run/${encodeURIComponent(s.run)}/test/${encodeURIComponent(t.key)}?tab=lifecycle` : null;
+      const when = !s.n ? 'prima dello storico'
+        : `${first ? `<a href="${esc(first)}" title="Apri la prima esecuzione con questo test case">dal ${esc(dateShort(s.from))}</a>` : `dal ${esc(dateShort(s.from))}`}${s.to && dateShort(s.to) !== dateShort(s.from) ? ` al ${esc(dateShort(s.to))}` : ''} · ${s.n} esecuzion${s.n === 1 ? 'e' : 'i'}`;
+      return `<li class="life-step${i === at ? ' here' : ''}${!s.n ? ' gone' : ''}"${i === at ? ' aria-current="step"' : ''}><span class="life-dot"${i === at ? ' title="La tappa del piano aperto"' : ''} aria-hidden="true"></span>
+        <div class="life-body"><div class="life-h">${id}<span class="life-what">${what}</span></div>
+          <div class="life-where">${plans ? `Piano ${esc(plans)}` : '<span class="muted">piano sconosciuto</span>'}${cats ? ` · ${esc(cats)}` : ''}</div>
+          <div class="life-when muted">${when}</div></div></li>`;
+    }).reverse().join('');
+    return `<section class="card"><h3 class="card-h">${ic('route')}Ciclo di vita<span class="note">${life.length} test case, dal più recente</span></h3><ol class="life">${steps}</ol></section>`;
   }
 
   /**
@@ -1419,11 +1452,13 @@
     if (c.flaky) callout += co('c-flaky', 'zig', `<b>Instabile</b>: sulla versione <span class="mono">${esc(run.version)}</span> ha dato esiti diversi tra un'esecuzione e l'altra.`);
 
     const labels = [...categoriesOf(t).map(v => ['tag', v]), ...Object.entries(t.properties || {})];
+    const life = hist && hist.l && hist.l.length ? hist.l : null;
     const tabs = [
       ['overview', 'Dettaglio', 'list', null],
       ['history', 'Storico', 'history', hist ? hist.st.replace(/-/g, '').length : 0],
       ['attachments', 'Allegati', 'clip', 1 + media.length],   // l'evidenza in testo, poi foto e video
       ['links', 'Collegamenti', 'link', Object.values(linksOf(t, runIdx)).reduce((s, xs) => s + xs.length, 0)],
+      ...(life ? [['lifecycle', 'Ciclo di vita', 'route', life.length]] : []),
       ['info', 'Informazioni', 'info', null],
     ];
     // Intestazione e schede in un blocco fisso (sticky) come l'albero a sinistra: restano in vista
@@ -1466,6 +1501,7 @@
       <section class="panel" data-panel="history" hidden>${historyPanel(t, hist, runIdx)}</section>
       <section class="panel" data-panel="attachments" hidden>${evidenceCard(t, run)}${media.length ? `<h3 class="sub-h">${ic('image')}Immagini e video<span class="note">${media.length}</span></h3>${mediaStrip(media, 'gallery')}` : ''}</section>
       <section class="panel" data-panel="links" hidden>${linksPanel(t, runIdx)}</section>
+      ${life ? `<section class="panel" data-panel="lifecycle" hidden>${lifecyclePanel(t, life)}</section>` : ''}
       <section class="panel" data-panel="info" hidden>${infoPanel(t, run)}</section>`;
   }
   /**
@@ -1663,8 +1699,6 @@
   const trailModels = [];
   function trailCells(t, hist, runIdx) {
     const here = QA.scope || {}, cur = runs[runIdx] && runs[runIdx].id;
-    const plans = (QA.plans && QA.plans.plans) || [];
-    const planLabel = slug => { const p = plans.find(x => x.slug === slug); return p ? (p.title || (/^\d/.test(p.id) ? `Piano ${p.id}` : p.id)) : slug; };
     // Finestra visibile: le ultime TRAIL_LAST, spostata indietro se l'esecuzione aperta è prima.
     const total = hist.x.reduce((n, x) => n + x[3].length, 0);
     let curPos = -1, pos = 0;
@@ -1686,7 +1720,7 @@
       // La stanghetta sta nel piano della promozione, dopo l'ultimo esito di validazione: anche quando la
       // non regressione comincia con il piano successivo.
       if (band && prev === 'validation' && cat === 'non-regression') band.items.push({ k: 'p', old: pos - 1 < start || pos - 1 >= end });
-      if (!band || band.plan !== plan) bands.push(band = { plan, label: planLabel(plan), here: plan === here.plan, alt: bands.length % 2 === 0, items: [] });
+      if (!band || band.plan !== plan) bands.push(band = { plan, label: planTitle(plan), here: plan === here.plan, alt: bands.length % 2 === 0, items: [] });
       prev = cat;
       const inScope = plan === here.plan && cat === here.cat;
       [...letters].forEach((s, j) => {
@@ -1721,8 +1755,10 @@
     m.bands.forEach(band => {
       const shown = band.items.filter(it => m.all || !it.old);
       if (!shown.some(it => it.k === 'c')) return;
-      // Il piano comincia su questa riga se ci sta almeno un esito.
-      if (x > 0 && x + TR.bandGap + TR.pad * 2 + TR.cell > W) newRow();
+      // Il piano comincia su questa riga se ci stanno almeno 4 esiti (o tutti, se ne ha meno): uno solo
+      // a fine riga, con il nome ridotto a una lettera, non si legge.
+      const need = Math.min(4, shown.filter(it => it.k === 'c').length);
+      if (x > 0 && x + TR.bandGap + TR.pad * 2 + need * (TR.cell + TR.gap) - TR.gap > W) newRow();
       if (x > 0) x += TR.bandGap;
       let first = true;
       shown.forEach(it => {
