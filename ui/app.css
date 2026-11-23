@@ -370,18 +370,28 @@ a.issue-link:hover { text-decoration: none; box-shadow: 0 0 0 1px currentColor; 
 .lk-st.muted { color: var(--muted); font-weight: 500; }
 /* Ciclo di vita del test: una tappa per test case, il pallino colorato è il piano aperto. */
 .life { list-style: none; margin: 0; padding: 0; }
-.life-step { position: relative; display: flex; gap: 12px; padding: 0 0 16px; }
+.life-step, .life-toggle { position: relative; display: flex; align-items: center; gap: 12px; padding: 0 0 10px; }
 .life-step:last-child { padding-bottom: 0; }
-.life-step:not(:last-child)::before { content: ""; position: absolute; left: 6px; top: 16px; bottom: 0; width: 2px; background: var(--border); }
-.life-dot { flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; background: var(--surface-3); border: 2px solid var(--border); box-sizing: border-box; }
+.life > li:not(:last-child)::before { content: ""; position: absolute; left: 6px; top: 50%; height: 100%; width: 2px; background: var(--border); }
+.life-dot { position: relative; flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--surface-3); border: 2px solid var(--border); box-sizing: border-box; }
 .life-step.here .life-dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
-.life-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.life-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; }
-.life-h a { display: inline-flex; align-items: center; gap: 4px; }
-.life-what { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.life-where { font-size: 13px; overflow-wrap: anywhere; }
-.life-when { font-size: 12.5px; }
-.life-step.gone .life-where, .life-step.gone .life-h { color: var(--muted); }
+.life-toggle .life-dot { background: transparent; border-style: dashed; }
+/* Una riga per tappa, in colonne: Id, categoria e piano, date ed esecuzioni. */
+.life-row { flex: 1; min-width: 0; display: grid; grid-template-columns: 9ch minmax(0, 1fr) auto; align-items: baseline; gap: 4px 12px; font-size: 13px; }
+.life-id { font-weight: 700; }
+.life-id a { display: inline-flex; align-items: center; gap: 4px; }
+.life-where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.life-when { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.life-step.gone .life-where, .life-step.gone .life-id { color: var(--muted); }
+.life:not(.all) .life-more { display: none; }
+.life.all .life-toggle { order: 0; }
+@media (max-width: 640px) {
+  .life-row { grid-template-columns: auto minmax(0, 1fr); }
+  .life-when { grid-column: 1 / -1; }
+}
+/* Tanti test case (clonati a ogni rilascio): i più recenti e quello di nascita, gli altri con "mostra tutti". */
+.lk-table:not(.all) .lk-more { display: none; }
+.lk-toggle td { padding-top: 4px; padding-bottom: 4px; }
 .lk-table .lk-st { white-space: normal; align-items: baseline; } .lk-table .lk-st i { flex: 0 0 auto; transform: translateY(-1px); }
 .lk-card { padding: 6px 18px 10px; }
 /* Tabella dei collegamenti. */

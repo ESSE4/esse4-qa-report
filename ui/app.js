@@ -238,42 +238,61 @@
         tip: say(i => ver(i)),
       };
     };
-    const items = LINK_KINDS.flatMap(([k, label, icon]) => all[k].map(l => ({
+    // Test case nell'ordine del ciclo di vita, dal più recente (l, dal generatore); senza, come sul test.
+    const life = (idx.tests && idx.tests[t.key] && idx.tests[t.key].l) || [];
+    const caseId = id => { const s = String(id).trim().replace(/^#/, ''); return /^tc\d/i.test(s) ? s.slice(2) : s; };
+    const age = l => { const i = life.findIndex(s => s.id.toLowerCase() === caseId(l.id).toLowerCase()); return i < 0 ? Infinity : -i; };
+    const cases = all.testcase.slice().sort((a, b) => age(a) - age(b));
+    // Come nel ciclo di vita: con tanti test case si vedono i LIFE_SHOWN più recenti e quello di nascita.
+    const many = cases.length > LIFE_SHOWN + 2;
+    const items = LINK_KINDS.flatMap(([k, label, icon]) => (k === 'testcase' ? cases : all[k]).map((l, i, xs) => ({
       kind: k, label, icon, id: l.id, title: l.title, url: linkUrl(k, l.id, l.url), story: k === 'bug' ? story(l) : null, aka: k === 'bug' ? l.aka || [] : [],
+      more: k === 'testcase' && many && i >= LIFE_SHOWN && i < xs.length - 1,
     })));
+    const hidden = items.filter(x => x.more).length;
+    const toggle = `<tr class="lk-toggle"><td colspan="4"><button type="button" class="link-btn" data-lk-all aria-expanded="false" data-all="mostra tutti" data-less="mostra meno">altri ${hidden} test case · mostra tutti</button></td></tr>`;
     const idHtml = x => x.url ? `<a class="lk-id mono" href="${esc(x.url)}" target="_blank" rel="noopener" title="Apri ${esc(x.label)} ${esc(x.id)}">${esc(x.id)}${ic('external')}</a>` : `<span class="lk-id mono">${esc(x.id)}</span>`;
     const titleHtml = x => x.title ? esc(x.title) : '<span class="muted">senza titolo</span>';
     const storyHtml = x => x.story ? `<span class="lk-st ${x.story.cls}" title="${esc(x.story.tip)}"><i></i>${esc(x.story.text)}</span>` : '';
     return `<section class="card lk-card"><table class="table lk-table"><thead><tr><th>Tipo</th><th>Id</th><th>Titolo</th><th>Storia</th></tr></thead><tbody>
-      ${items.map(x => `<tr><td class="nowrap">${ic(x.icon)} ${esc(x.label)}</td><td class="nowrap">${idHtml(x)}${x.aka.length ? `<span class="lk-aka" title="Lo stesso bug con gli id di prima">prima ${x.aka.map(esc).join(', ')}</span>` : ''}</td><td>${titleHtml(x)}</td><td>${storyHtml(x)}</td></tr>`).join('')}
+      ${items.map((x, i) => `${x.more && !items[i - 1].more ? toggle : ''}<tr${x.more ? ' class="lk-more"' : ''}><td class="nowrap">${ic(x.icon)} ${esc(x.label)}</td><td class="nowrap">${idHtml(x)}${x.aka.length ? `<span class="lk-aka" title="Lo stesso bug con gli id di prima">prima ${x.aka.map(esc).join(', ')}</span>` : ''}</td><td>${titleHtml(x)}</td><td>${storyHtml(x)}</td></tr>`).join('')}
       </tbody></table></section>`;
   }
 
   /**
    * Scheda "Ciclo di vita": le tappe del test, una per test case (l, dal generatore), dalla più recente in
-   * alto a quella con cui il test è nato in fondo; le altre sono i cloni dei rilasci successivi. Il pallino
-   * colorato è la tappa del piano aperto. Ogni tappa porta alla sua prima esecuzione, nel report dove è stata
-   * registrata.
+   * alto a quella con cui il test è nato in fondo. Per ognuna categoria e piano, date ed esecuzioni; il
+   * pallino colorato è la tappa del piano aperto.
    */
+  const LIFE_SHOWN = 3;
   function lifecyclePanel(t, life) {
     const here = QA.scope || {};
     const at = life.reduce((k, s, i) => (s.plans || []).includes(here.plan) ? i : k, -1);
-    const steps = life.map((s, i) => {
+    // Dalla più recente; con tante tappe si vedono le ultime LIFE_SHOWN, la nascita e quella del piano
+    // aperto, le altre con "mostra tutte".
+    const order = life.map((s, i) => i).reverse();
+    const many = life.length > LIFE_SHOWN + 2;
+    const shown = i => !many || order.indexOf(i) < LIFE_SHOWN || i === 0 || i === at;
+    const row = i => {
+      const s = life[i];
       const plans = (s.plans || []).map(planTitle).join(' → ');
-      const cats = (s.cats || []).filter(Boolean).map(c => (CAT_LABELS[c] || c).toLowerCase()).join(' → ');
-      const what = i === 0 ? 'Nato' : 'Clonato';
+      const cats = (s.cats || []).filter(Boolean).map(c => CAT_LABELS[c] || c).join(' → ');
       const url = linkUrl('testcase', s.id, null);
       const id = url ? `<a class="mono" href="${esc(url)}" target="_blank" rel="noopener" title="Apri il test case ${esc(s.id)}">${esc(s.id)}${ic('external')}</a>` : `<span class="mono">${esc(s.id)}</span>`;
-      const plan0 = (s.plans || [])[0], cat0 = (s.cats || [])[0];
-      const first = s.run && plan0 && cat0 ? `${plan0 === here.plan && cat0 === here.cat ? '' : `?plan=${encodeURIComponent(plan0)}&cat=${encodeURIComponent(cat0)}${here.pf ? '&pf=' + encodeURIComponent(here.pf) : ''}`}#/run/${encodeURIComponent(s.run)}/test/${encodeURIComponent(t.key)}?tab=lifecycle` : null;
-      const when = !s.n ? 'prima dello storico'
-        : `${first ? `<a href="${esc(first)}" title="Apri la prima esecuzione con questo test case">dal ${esc(dateShort(s.from))}</a>` : `dal ${esc(dateShort(s.from))}`}${s.to && dateShort(s.to) !== dateShort(s.from) ? ` al ${esc(dateShort(s.to))}` : ''} · ${s.n} esecuzion${s.n === 1 ? 'e' : 'i'}`;
-      return `<li class="life-step${i === at ? ' here' : ''}${!s.n ? ' gone' : ''}"${i === at ? ' aria-current="step"' : ''}><span class="life-dot"${i === at ? ' title="La tappa del piano aperto"' : ''} aria-hidden="true"></span>
-        <div class="life-body"><div class="life-h">${id}<span class="life-what">${what}</span></div>
-          <div class="life-where">${plans ? `Piano ${esc(plans)}` : '<span class="muted">piano sconosciuto</span>'}${cats ? ` · ${esc(cats)}` : ''}</div>
-          <div class="life-when muted">${when}</div></div></li>`;
-    }).reverse().join('');
-    return `<section class="card"><h3 class="card-h">${ic('route')}Ciclo di vita<span class="note">${life.length} test case, dal più recente</span></h3><ol class="life">${steps}</ol></section>`;
+      const range = `${dateShort(s.from)}${s.to && dateShort(s.to) !== dateShort(s.from) ? ' → ' + dateShort(s.to) : ''}`;
+      const when = !s.n ? 'prima dello storico' : `${esc(range)} · ${s.n} esec.`;
+      // Categoria, poi piano: "Non regressione · Gemini".
+      const label = [cats, plans].filter(Boolean).join(' · ');
+      const where = label ? esc(label) : '<span class="muted">piano sconosciuto</span>';
+      return `<li class="life-step${i === at ? ' here' : ''}${!s.n ? ' gone' : ''}${shown(i) ? '' : ' life-more'}"${i === at ? ' aria-current="step"' : ''}><span class="life-dot"${i === at ? ' title="La tappa del piano aperto"' : ''} aria-hidden="true"></span>
+        <div class="life-row"><span class="life-id">${id}</span>
+          <span class="life-where" title="${esc(label)}">${where}</span><span class="life-when">${when}</span></div></li>`;
+    };
+    const hidden = order.filter(i => !shown(i)).length;
+    // La riga "mostra tutte" sta dove cominciano le tappe nascoste.
+    const firstHidden = order.find(i => !shown(i));
+    const steps = order.map(i => (i === firstHidden ? `<li class="life-toggle"><span class="life-dot" aria-hidden="true"></span><button type="button" class="link-btn" data-life-all aria-expanded="false" data-all="mostra tutte" data-less="mostra meno">altre ${hidden} tappe · mostra tutte</button></li>` : '') + row(i)).join('');
+    return `<section class="card"><h3 class="card-h">${ic('route')}Ciclo di vita</h3><ol class="life">${steps}</ol></section>`;
   }
 
   /**
@@ -1458,7 +1477,7 @@
       ['history', 'Storico', 'history', hist ? hist.st.replace(/-/g, '').length : 0],
       ['attachments', 'Allegati', 'clip', 1 + media.length],   // l'evidenza in testo, poi foto e video
       ['links', 'Collegamenti', 'link', Object.values(linksOf(t, runIdx)).reduce((s, xs) => s + xs.length, 0)],
-      ...(life ? [['lifecycle', 'Ciclo di vita', 'route', life.length]] : []),
+      ...(life ? [['lifecycle', 'Ciclo di vita', 'route', null]] : []),
       ['info', 'Informazioni', 'info', null],
     ];
     // Intestazione e schede in un blocco fisso (sticky) come l'albero a sinistra: restano in vista
@@ -1875,6 +1894,20 @@
     const copyText = e.target.closest('[data-copy-text]');
     if (copyText) {
       try { await navigator.clipboard.writeText(copyText.dataset.copyText); toast('Copiato'); } catch { toast('Copia non riuscita'); }
+      return;
+    }
+    const lkAll = e.target.closest('[data-lk-all]');
+    if (lkAll) {
+      const all = lkAll.closest('.lk-table').classList.toggle('all');
+      lkAll.setAttribute('aria-expanded', all);
+      lkAll.textContent = all ? lkAll.dataset.less : lkAll.dataset.all;
+      return;
+    }
+    const lifeAll = e.target.closest('[data-life-all]');
+    if (lifeAll) {
+      const all = lifeAll.closest('.life').classList.toggle('all');
+      lifeAll.setAttribute('aria-expanded', all);
+      lifeAll.textContent = all ? lifeAll.dataset.less : lifeAll.dataset.all;
       return;
     }
     const trailAll = e.target.closest('[data-trail-all]');
