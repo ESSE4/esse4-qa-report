@@ -1638,8 +1638,129 @@
         ${rows.map(x => `<a class="hist-row ${x.k === runIdx ? 'current' : ''}" href="#/run/${encodeURIComponent(x.r.id)}/test/${encodeURIComponent(t.key)}${x.k === runIdx ? '' : '?tab=overview'}">
           ${statusIcon(statusOfLetter(x.s))}<span>${esc(dt(x.r.start))}</span><span class="muted">${esc(dur(hist.d[x.k]))}</span></a>`).join('')}</div>`;
     }).join('');
-    return `<section class="card"><h3 class="card-h">${ic('history')}Esito nelle esecuzioni<span class="note">dalla più vecchia</span></h3><div class="strip">${cells}</div></section>
+    const trail = hist.x && idx.trailRuns ? trailCells(t, hist, runIdx) : null;
+    const strip = trail ? `<div class="strip trail" data-trail="${trail.id}" role="list"></div>` : `<div class="strip">${cells}</div>`;
+    // Con il percorso tra i piani: "100 di 338 · mostra tutte", e il pulsante torna indietro.
+    const note = !trail ? 'dalla più vecchia' : !trail.hidden ? 'tutti i piani'
+      : `<span class="trail-n">${trail.shown} di ${trail.total} · </span><button type="button" class="link-btn trail-more" data-trail-all aria-expanded="false" data-all="mostra tutte" data-last="mostra ${trail.shown}">mostra tutte</button>`;
+    return `<section class="card"><h3 class="card-h">${ic('history')}Esito nelle esecuzioni<span class="note">${note}</span></h3>${strip}</section>
       <div class="hist">${groups}</div>`;
+  }
+
+  /**
+   * Il percorso di un test che è passato per altri piani o categorie (hist.x dal generatore): tutta la sua
+   * storia, a fasce alterne come le versioni nell'istogramma, una per piano. La categoria non si scrive: un
+   * test è di validazione in un piano solo, e se compare anche nei successivi è di non regressione. La
+   * stanghetta segna dove smette di essere di validazione ed è promosso a non regressione. Gli esiti fuori
+   * da questo piano e categoria aprono il report dove sono stati registrati.
+   * Gli esiti scorrono come un testo: un piano comincia subito dopo il precedente, sulla stessa riga, e
+   * va a capo da sinistra; la sua fascia si spezza riga per riga. Per questo la striscia è impaginata qui
+   * (paintTrail), di nuovo ogni volta che cambia la sua larghezza.
+   * Con molte esecuzioni (oltre un quarto in più di TRAIL_LAST) si vedono le ultime TRAIL_LAST, o quelle
+   * intorno all'esecuzione aperta se è più vecchia; "mostra tutte" fa vedere le altre.
+   */
+  const TRAIL_LAST = 100;
+  const trailModels = [];
+  function trailCells(t, hist, runIdx) {
+    const here = QA.scope || {}, cur = runs[runIdx] && runs[runIdx].id;
+    const plans = (QA.plans && QA.plans.plans) || [];
+    const planLabel = slug => { const p = plans.find(x => x.slug === slug); return p ? (p.title || (/^\d/.test(p.id) ? `Piano ${p.id}` : p.id)) : slug; };
+    // Finestra visibile: le ultime TRAIL_LAST, spostata indietro se l'esecuzione aperta è prima.
+    const total = hist.x.reduce((n, x) => n + x[3].length, 0);
+    let curPos = -1, pos = 0;
+    hist.x.forEach(([plan, cat, from, letters]) => {
+      if (plan === here.plan && cat === here.cat) [...letters].forEach((_, j) => { if (idx.trailRuns[from + j].id === cur) curPos = pos + j; });
+      pos += letters.length;
+    });
+    // Nascondere poche esecuzioni non accorcia niente e toglie proprio i piani brevi: si taglia solo da un quarto in più.
+    const cut = total > TRAIL_LAST * 1.25;
+    let start = cut ? total - TRAIL_LAST : 0;
+    if (cut && curPos >= 0 && curPos < start) start = Math.max(0, Math.min(curPos - Math.floor(TRAIL_LAST / 2), total - TRAIL_LAST));
+    const end = cut ? start + TRAIL_LAST : total;
+    pos = 0;
+    // Una fascia per piano: esiti (c) e, dove il test è promosso, la stanghetta (p).
+    const bands = [];
+    let prev = null;
+    hist.x.forEach(([plan, cat, from, letters]) => {
+      let band = bands.at(-1);
+      // La stanghetta sta nel piano della promozione, dopo l'ultimo esito di validazione: anche quando la
+      // non regressione comincia con il piano successivo.
+      if (band && prev === 'validation' && cat === 'non-regression') band.items.push({ k: 'p', old: pos - 1 < start || pos - 1 >= end });
+      if (!band || band.plan !== plan) bands.push(band = { plan, label: planLabel(plan), here: plan === here.plan, alt: bands.length % 2 === 0, items: [] });
+      prev = cat;
+      const inScope = plan === here.plan && cat === here.cat;
+      [...letters].forEach((s, j) => {
+        const r = idx.trailRuns[from + j], k = inScope ? runs.findIndex(x => x.id === r.id) : -1;
+        const d = k >= 0 ? hist.d[k] : null, isCur = inScope && r.id === cur, old = pos < start || pos >= end;
+        pos++;
+        const tip = `${dt(r.start)} · versione ${r.version} · ${s === '-' ? 'assente' : statusLabel(statusOfLetter(s)).toLowerCase()}${d != null ? ' · ' + dur(d) : ''}`;
+        const scope = inScope ? '' : `?plan=${encodeURIComponent(plan)}&cat=${encodeURIComponent(cat)}${here.pf ? '&pf=' + encodeURIComponent(here.pf) : ''}`;
+        band.items.push({ k: 'c', old, cls: (s === '-' ? 'x' : s) + (isCur ? ' current' : ''), tip,
+          href: s === '-' ? null : `${scope}#/run/${encodeURIComponent(r.id)}/test/${encodeURIComponent(t.key)}${isCur ? '' : '?tab=history'}` });
+      });
+    });
+    trailModels.push({ bands, all: false, w: 0 });
+    return { id: trailModels.length - 1, total, shown: end - start, hidden: total - (end - start) };
+  }
+
+  /**
+   * Impagina la striscia per la sua larghezza attuale: pezzi di fascia (uno per riga), nomi dei piani,
+   * esiti e stanghette, in posizione assoluta. Il nome è largo quanto il primo pezzo della sua fascia:
+   * intero se c'è spazio, altrimenti accorciato (intero al passaggio del mouse).
+   */
+  const TR = { cell: 14, gap: 3, pad: 6, bandGap: 6, promo: 11, label: 15, padV: 5, h: 22, rowGap: 4 };
+  function paintTrail(el, force) {
+    const m = trailModels[+el.dataset.trail], W = el.clientWidth;
+    if (!m || !W || (!force && m.w === W)) return;
+    m.w = W;
+    const frags = [], items = [];
+    let row = 0, x = 0, frag = null;
+    const newRow = () => { row++; x = 0; };
+    const open = (band, label) => { frag = { band, row, left: x, label }; x += TR.pad; };
+    const close = () => { frag.right = x - TR.gap + TR.pad; frags.push(frag); x = frag.right; frag = null; };
+    m.bands.forEach(band => {
+      const shown = band.items.filter(it => m.all || !it.old);
+      if (!shown.some(it => it.k === 'c')) return;
+      // Il piano comincia su questa riga se ci sta almeno un esito.
+      if (x > 0 && x + TR.bandGap + TR.pad * 2 + TR.cell > W) newRow();
+      if (x > 0) x += TR.bandGap;
+      let first = true;
+      shown.forEach(it => {
+        const w = it.k === 'c' ? TR.cell : TR.promo - TR.gap;
+        if (!frag) open(band, first);
+        // La stanghetta non va a capo da sola: al massimo occupa il bordo interno della fascia.
+        if (x + w + (it.k === 'p' ? 0 : TR.pad) > W && x > frag.left + TR.pad) { close(); newRow(); open(band, false); }
+        items.push({ it, row, x: it.k === 'p' ? x + 2 : x });
+        x += w + TR.gap;
+        first = false;
+      });
+      close();
+    });
+    // Le righe dove comincia un piano hanno lo spazio per il suo nome.
+    const nRows = row + 1, named = r => frags.some(f => f.row === r && f.label);
+    const top = [];
+    let y = 0;
+    for (let r = 0; r < nRows; r++) { top.push(y); y += (named(r) ? TR.label : 0) + TR.padV * 2 + TR.h + TR.rowGap; }
+    const cellTop = r => top[r] + (named(r) ? TR.label : 0) + TR.padV;
+    // Solo il pezzo con il nome sale fin sopra; gli altri della riga restano intorno agli esiti.
+    let html = frags.map(f => {
+      const label = f.label ? `<span class="trail-l" title="${esc(f.band.label)}" style="width:${f.right - f.left - TR.pad * 2}px">${esc(f.band.label)}</span>` : '';
+      const y0 = f.label ? top[f.row] : cellTop(f.row) - TR.padV, h = cellTop(f.row) + TR.h + TR.padV - y0;
+      return `<div class="trail-frag${f.band.alt ? ' alt' : ''}${f.band.here ? ' here' : ''}" style="left:${f.left}px;top:${y0}px;width:${f.right - f.left}px;height:${h}px">${label}</div>`;
+    }).join('');
+    html += items.map(({ it, row: r, x: ix }) => {
+      if (it.k === 'p') return `<div class="trail-promo" style="left:${ix}px;top:${cellTop(r)}px;height:${TR.h}px" title="Promosso da validazione a non regressione" aria-label="Promosso a non regressione"></div>`;
+      const st = `left:${ix}px;top:${cellTop(r)}px`;
+      return it.href ? `<a role="listitem" class="${it.cls}" href="${it.href}" title="${esc(it.tip)}" style="${st}"></a>`
+        : `<span role="listitem" class="${it.cls}" title="${esc(it.tip)}" style="${st}"></span>`;
+    }).join('');
+    el.innerHTML = html;
+    el.style.height = `${y - TR.rowGap}px`;
+  }
+  const trailRO = window.ResizeObserver ? new ResizeObserver(es => es.forEach(e => paintTrail(e.target))) : null;
+  /** Impagina le strisce in root, ora e quando cambiano larghezza (anche quando la scheda diventa visibile). */
+  function watchTrails(root) {
+    root.querySelectorAll('.strip.trail[data-trail]').forEach(el => { if (trailRO) trailRO.observe(el); paintTrail(el); });
   }
 
   function infoPanel(t, run) {
@@ -1666,6 +1787,7 @@
     };
     tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.tab, true)));
     show(store.get(key, def), false);
+    watchTrails(root);
   }
 
   /** Test precedente/successivo nell'ordine dell'albero con i filtri attuali (tutte le pagine). */
@@ -1717,6 +1839,15 @@
     const copyText = e.target.closest('[data-copy-text]');
     if (copyText) {
       try { await navigator.clipboard.writeText(copyText.dataset.copyText); toast('Copiato'); } catch { toast('Copia non riuscita'); }
+      return;
+    }
+    const trailAll = e.target.closest('[data-trail-all]');
+    if (trailAll) {
+      const strip = trailAll.closest('.card').querySelector('.strip.trail'), all = strip.classList.toggle('all');
+      trailModels[+strip.dataset.trail].all = all;
+      paintTrail(strip, true);
+      trailAll.setAttribute('aria-expanded', all);
+      trailAll.textContent = all ? trailAll.dataset.last : trailAll.dataset.all;
       return;
     }
     const per = e.target.closest('[data-period]');
